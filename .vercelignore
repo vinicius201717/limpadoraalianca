@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+
+.next
+node_modules
+data
+backups
+dev-server*.log
+tsconfig.tsbuildinfo
+
+src/generated/prisma
