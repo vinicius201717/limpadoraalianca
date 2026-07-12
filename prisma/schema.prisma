@@ -1,0 +1,828 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum UserRole {
+  OWNER
+  GERENTE
+  SUPERVISOR_OBRA
+  ALMOXARIFADO
+  COMERCIAL
+  TECNICO
+  FINANCEIRO
+  COLABORADOR
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  ON_LEAVE
+  FIRED
+}
+
+enum CustomerType {
+  PERSON
+  COMPANY
+  ARCHITECT
+  CONSTRUCTION_COMPANY
+  CONDOMINIUM
+  REAL_ESTATE
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  INSPECTION_SCHEDULED
+  INSPECTION_DONE
+  QUOTE_SENT
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum SurfaceType {
+  MARBLE
+  GRANITE
+  PORCELAIN
+  LIMESTONE
+  TRAVERTINE
+  SLATE
+  WOOD
+  VINYL
+  CEMENT
+  OTHER
+}
+
+enum ServiceType {
+  POST_CONSTRUCTION_CLEANING
+  POLISHING
+  RESTORATION
+  CRYSTALLIZATION
+  WATERPROOFING
+  STAIN_REMOVAL
+  GROUT_CLEANING
+  MAINTENANCE
+  OTHER
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ServiceOrderStatus {
+  SCHEDULED
+  PREPARING
+  IN_PROGRESS
+  PAUSED
+  WAITING_CUSTOMER
+  DONE
+  DELIVERED
+  CANCELED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  CANCELED
+}
+
+enum ServiceTeamRole {
+  SUPERVISOR
+  POLIDOR
+  AUXILIAR
+  TECNICO
+  MOTORISTA
+  ALMOXARIFADO
+  OUTRO
+}
+
+enum ChecklistItemStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  BLOCKED
+  REOPENED
+  CANCELED
+}
+
+enum ChecklistPhotoType {
+  BEFORE
+  DURING
+  AFTER
+  EVIDENCE
+  PROBLEM
+}
+
+enum ChecklistEventType {
+  CREATED
+  UPDATED
+  ASSIGNED
+  STARTED
+  COMPLETED
+  VALIDATED
+  REOPENED
+  BLOCKED
+  CANCELED
+  PHOTO_ADDED
+  PHOTO_REMOVED
+  COMMENT_ADDED
+}
+
+enum ServiceOrderMaterialStatus {
+  PENDING_SEPARATION
+  SEPARATING
+  RESERVED
+  SEPARATED
+  DELIVERED_TO_TEAM
+  PARTIALLY_RETURNED
+  RETURNED
+  CONSUMED
+  DAMAGED
+  LOST
+  CANCELED
+}
+
+enum ServiceOrderEquipmentStatus {
+  REQUESTED
+  RESERVED
+  DELIVERED
+  IN_USE
+  RETURNED
+  DAMAGED
+  LOST
+  CANCELED
+}
+
+enum MaterialRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SEPARATED
+  DELIVERED
+  CANCELED
+}
+
+enum MaterialRequestPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ScheduleEventType {
+  INSPECTION
+  SERVICE_ORDER
+  MATERIAL_PREPARATION
+  EQUIPMENT_RETURN
+  WARRANTY_RETURN
+  AFTER_SALES
+  INTERNAL_TASK
+}
+
+enum ScheduleEventStatus {
+  SCHEDULED
+  IN_PROGRESS
+  DONE
+  CANCELED
+  DELAYED
+}
+
+model User {
+  id                              String               @id @default(cuid())
+  name                            String
+  email                           String               @unique
+  passwordHash                    String
+  role                            UserRole
+  isActive                        Boolean              @default(true)
+  lastLoginAt                     DateTime?
+  createdAt                       DateTime             @default(now())
+  updatedAt                       DateTime             @updatedAt
+  inspections                     Inspection[]         @relation("TechnicianInspections")
+  evaluations                     EmployeeEvaluation[] @relation("SupervisorEvaluations")
+  employeeProfile                 Employee?
+  supervisedServiceOrders         ServiceOrder[]       @relation("ServiceOrderSupervisorUser")
+  assignedServiceOrders           ServiceOrder[]       @relation("ServiceOrderAssigner")
+  assignedSupervisorServiceOrders ServiceOrder[]       @relation("ServiceOrderSupervisorAssigner")
+  auditLogs                       AuditLog[]
+  notifications                   Notification[]
+
+  @@index([role])
+  @@index([isActive])
+}
+
+model Customer {
+  id            String         @id @default(cuid())
+  name          String
+  phone         String
+  email         String?
+  document      String?
+  type          CustomerType   @default(PERSON)
+  source        String?
+  notes         String?        @db.Text
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  leads         Lead[]
+  properties    Property[]
+  inspections   Inspection[]
+  quotes        Quote[]
+  serviceOrders ServiceOrder[]
+  warranties    Warranty[]
+}
+
+model Lead {
+  id             String     @id @default(cuid())
+  name           String
+  phone          String
+  email          String?
+  source         String?
+  status         LeadStatus @default(NEW)
+  estimatedValue Decimal?   @db.Decimal(12, 2)
+  nextFollowUpAt DateTime?
+  notes          String?    @db.Text
+  customerId     String?
+  customer       Customer?  @relation(fields: [customerId], references: [id])
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+model Property {
+  id          String       @id @default(cuid())
+  customerId  String
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  name        String
+  address     String
+  city        String?
+  state       String?
+  notes       String?      @db.Text
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  inspections Inspection[]
+}
+
+model Inspection {
+  id                 String            @id @default(cuid())
+  customerId         String
+  propertyId         String?
+  technicianUserId   String?
+  surfaceType        SurfaceType
+  serviceType        ServiceType
+  areaM2             Decimal           @db.Decimal(10, 2)
+  currentState       String
+  dirtLevel          String?
+  damageDescription  String?           @db.Text
+  technicalRisk      String?
+  recommendedService String?           @db.Text
+  internalNotes      String?           @db.Text
+  inspectionDate     DateTime
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  customer           Customer          @relation(fields: [customerId], references: [id])
+  property           Property?         @relation(fields: [propertyId], references: [id])
+  technician         User?             @relation("TechnicianInspections", fields: [technicianUserId], references: [id])
+  photos             InspectionPhoto[]
+  quotes             Quote[]
+}
+
+model InspectionPhoto {
+  id           String     @id @default(cuid())
+  inspectionId String
+  inspection   Inspection @relation(fields: [inspectionId], references: [id])
+  url          String
+  label        String?
+  createdAt    DateTime   @default(now())
+}
+
+model Quote {
+  id            String         @id @default(cuid())
+  customerId    String
+  inspectionId  String?
+  status        QuoteStatus    @default(DRAFT)
+  validUntil    DateTime?
+  paymentTerms  String?
+  subtotal      Decimal        @default(0) @db.Decimal(12, 2)
+  discount      Decimal        @default(0) @db.Decimal(12, 2)
+  total         Decimal        @default(0) @db.Decimal(12, 2)
+  notes         String?        @db.Text
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  inspection    Inspection?    @relation(fields: [inspectionId], references: [id])
+  items         QuoteItem[]
+  serviceOrders ServiceOrder[]
+}
+
+model QuoteItem {
+  id          String      @id @default(cuid())
+  quoteId     String
+  quote       Quote       @relation(fields: [quoteId], references: [id])
+  serviceType ServiceType
+  description String
+  areaM2      Decimal?    @db.Decimal(10, 2)
+  unitPrice   Decimal     @db.Decimal(12, 2)
+  quantity    Decimal     @db.Decimal(10, 2)
+  discount    Decimal     @default(0) @db.Decimal(12, 2)
+  total       Decimal     @db.Decimal(12, 2)
+}
+
+model ServiceOrder {
+  id                         String                       @id @default(cuid())
+  customerId                 String
+  quoteId                    String?
+  title                      String
+  description                String?                      @db.Text
+  address                    String
+  scheduledStart             DateTime
+  scheduledEnd               DateTime?
+  actualStart                DateTime?
+  actualEnd                  DateTime?
+  status                     ServiceOrderStatus           @default(SCHEDULED)
+  supervisorEmployeeId       String?
+  supervisorUserId           String?
+  assignedByUserId           String?
+  assignedAt                 DateTime?
+  assignedSupervisorByUserId String?
+  supervisorAssignedAt       DateTime?
+  internalNotes              String?                      @db.Text
+  clientNotes                String?                      @db.Text
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  customer                   Customer                     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quote                      Quote?                       @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  supervisorEmployee         Employee?                    @relation("ServiceOrderSupervisorEmployee", fields: [supervisorEmployeeId], references: [id], onDelete: SetNull)
+  supervisorUser             User?                        @relation("ServiceOrderSupervisorUser", fields: [supervisorUserId], references: [id], onDelete: SetNull)
+  assignedBy                 User?                        @relation("ServiceOrderAssigner", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  assignedSupervisorBy       User?                        @relation("ServiceOrderSupervisorAssigner", fields: [assignedSupervisorByUserId], references: [id], onDelete: SetNull)
+  tasks                      ServiceOrderTask[]
+  checklistItems             ServiceOrderChecklistItem[]
+  checklistPhotos            ServiceOrderChecklistPhoto[]
+  checklistEvents            ServiceOrderChecklistEvent[]
+  photos                     ServiceOrderPhoto[]
+  employees                  ServiceOrderEmployee[]
+  evaluations                EmployeeEvaluation[]
+  supervisorEvaluations      SupervisorEvaluation[]
+  materials                  MaterialStockMovement[]
+  serviceMaterials           ServiceOrderMaterial[]
+  materialRequests           ServiceMaterialRequest[]
+  equipmentUsage             EquipmentUsage[]
+  serviceEquipment           ServiceOrderEquipment[]
+  payments                   Payment[]
+  expenses                   Expense[]
+  warranties                 Warranty[]
+
+  @@index([status])
+  @@index([supervisorEmployeeId])
+  @@index([scheduledStart])
+  @@index([scheduledEnd])
+}
+
+model ServiceOrderTask {
+  id             String       @id @default(cuid())
+  serviceOrderId String
+  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+  title          String
+  isDone         Boolean      @default(false)
+  doneAt         DateTime?
+  notes          String?      @db.Text
+}
+
+model ServiceOrderChecklistItem {
+  id                      String                       @id @default(cuid())
+  serviceOrderId          String
+  title                   String
+  description             String?                      @db.Text
+  sortOrder               Int                          @default(0)
+  status                  ChecklistItemStatus          @default(PENDING)
+  isRequired              Boolean                      @default(true)
+  requiresPhoto           Boolean                      @default(false)
+  minimumPhotos           Int                          @default(0)
+  assignedEmployeeId      String?
+  assignedEmployeeIds     Json?
+  completedByEmployeeId   String?
+  startedByUserId         String?
+  completedByUserId       String?
+  validatedByUserId       String?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  validatedAt             DateTime?
+  completionNotes         String?                      @db.Text
+  problemDescription      String?                      @db.Text
+  blockedReason           String?                      @db.Text
+  notes                   String?                      @db.Text
+  createdByUserId         String
+  plannedStartAt          DateTime?
+  dueAt                   DateTime?
+  allowCollaboratorAction Boolean                      @default(false)
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
+  serviceOrder            ServiceOrder                 @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  assignedEmployee        Employee?                    @relation("ChecklistAssignedEmployee", fields: [assignedEmployeeId], references: [id])
+  completedByEmployee     Employee?                    @relation("ChecklistCompletedEmployee", fields: [completedByEmployeeId], references: [id])
+  photos                  ServiceOrderChecklistPhoto[]
+  events                  ServiceOrderChecklistEvent[]
+
+  @@index([serviceOrderId])
+  @@index([assignedEmployeeId])
+  @@index([status])
+}
+
+model ServiceOrderChecklistPhoto {
+  id               String                    @id @default(cuid())
+  checklistItemId  String
+  serviceOrderId   String
+  uploadedByUserId String
+  employeeId       String?
+  type             ChecklistPhotoType        @default(EVIDENCE)
+  url              String
+  fileName         String?
+  mimeType         String?
+  sizeBytes        Int?
+  caption          String?
+  createdAt        DateTime                  @default(now())
+  checklistItem    ServiceOrderChecklistItem @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+  serviceOrder     ServiceOrder              @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  employee         Employee?                 @relation(fields: [employeeId], references: [id])
+
+  @@index([checklistItemId])
+  @@index([serviceOrderId])
+}
+
+model ServiceOrderChecklistEvent {
+  id              String                    @id @default(cuid())
+  checklistItemId String
+  serviceOrderId  String
+  userId          String
+  employeeId      String?
+  type            ChecklistEventType
+  message         String?                   @db.Text
+  previousStatus  ChecklistItemStatus?
+  newStatus       ChecklistItemStatus?
+  metadataJson    Json?
+  createdAt       DateTime                  @default(now())
+  checklistItem   ServiceOrderChecklistItem @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+  serviceOrder    ServiceOrder              @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+
+  @@index([checklistItemId])
+  @@index([serviceOrderId])
+  @@index([createdAt])
+}
+
+model ChecklistTemplate {
+  id              String                  @id @default(cuid())
+  name            String
+  description     String?                 @db.Text
+  serviceType     ServiceType?
+  isActive        Boolean                 @default(true)
+  createdByUserId String
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  items           ChecklistTemplateItem[]
+}
+
+model ChecklistTemplateItem {
+  id            String            @id @default(cuid())
+  templateId    String
+  title         String
+  description   String?           @db.Text
+  sortOrder     Int               @default(0)
+  isRequired    Boolean           @default(true)
+  requiresPhoto Boolean           @default(false)
+  minimumPhotos Int               @default(0)
+  template      ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+model ServiceOrderPhoto {
+  id             String       @id @default(cuid())
+  serviceOrderId String
+  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+  stage          String
+  url            String
+  notes          String?      @db.Text
+  createdAt      DateTime     @default(now())
+}
+
+model Employee {
+  id                         String                       @id @default(cuid())
+  userId                     String?                      @unique
+  name                       String
+  phone                      String?
+  email                      String?
+  document                   String?                      @unique
+  jobTitle                   String?
+  roleName                   String?
+  specialty                  String?
+  status                     EmployeeStatus               @default(ACTIVE)
+  dailyCost                  Decimal?                     @db.Decimal(12, 2)
+  hiredAt                    DateTime?
+  notes                      String?                      @db.Text
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  user                       User?                        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  serviceOrders              ServiceOrderEmployee[]
+  supervisedServiceOrders    ServiceOrder[]               @relation("ServiceOrderSupervisorEmployee")
+  evaluations                EmployeeEvaluation[]
+  assignedChecklistItems     ServiceOrderChecklistItem[]  @relation("ChecklistAssignedEmployee")
+  completedChecklistItems    ServiceOrderChecklistItem[]  @relation("ChecklistCompletedEmployee")
+  checklistPhotos            ServiceOrderChecklistPhoto[]
+  supervisorEvaluations      SupervisorEvaluation[]       @relation("SupervisorEmployeeEvaluations")
+  givenSupervisorEvaluations SupervisorEvaluation[]       @relation("EmployeeSupervisorEvaluations")
+
+  @@index([status])
+}
+
+model ServiceOrderEmployee {
+  id               String          @id @default(cuid())
+  serviceOrderId   String
+  employeeId       String
+  roleInService    ServiceTeamRole @default(OUTRO)
+  assignedByUserId String?
+  assignedAt       DateTime        @default(now())
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  serviceOrder     ServiceOrder    @relation(fields: [serviceOrderId], references: [id], onDelete: Restrict)
+  employee         Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([serviceOrderId, employeeId])
+  @@index([employeeId])
+  @@index([serviceOrderId])
+}
+
+model EmployeeEvaluation {
+  id                       String                   @id @default(cuid())
+  serviceOrderId           String
+  employeeId               String
+  supervisorUserId         String
+  punctualityScore         Int
+  qualityScore             Int
+  productivityScore        Int
+  careScore                Int
+  teamworkScore            Int
+  clientPostureScore       Int
+  checklistComplianceScore Int
+  overallScore             Decimal                  @db.Decimal(3, 2)
+  positiveNotes            String?                  @db.Text
+  improvementNotes         String?                  @db.Text
+  seriousIssue             Boolean                  @default(false)
+  needsTraining            Boolean                  @default(false)
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+  serviceOrder             ServiceOrder             @relation(fields: [serviceOrderId], references: [id])
+  employee                 Employee                 @relation(fields: [employeeId], references: [id])
+  supervisor               User                     @relation("SupervisorEvaluations", fields: [supervisorUserId], references: [id])
+  items                    EmployeeEvaluationItem[]
+}
+
+model EmployeeEvaluationItem {
+  id           String             @id @default(cuid())
+  evaluationId String
+  evaluation   EmployeeEvaluation @relation(fields: [evaluationId], references: [id])
+  label        String
+  score        Int
+  notes        String?
+}
+
+model SupervisorEvaluation {
+  id                    String       @id @default(cuid())
+  serviceOrderId        String
+  supervisorEmployeeId  String
+  supervisorUserId      String
+  employeeId            String
+  employeeUserId        String?
+  clarityScore          Int
+  organizationScore     Int
+  respectScore          Int
+  taskDistributionScore Int
+  communicationScore    Int
+  supportScore          Int
+  leadershipScore       Int
+  overallScore          Decimal      @db.Decimal(3, 2)
+  positiveNotes         String?      @db.Text
+  improvementNotes      String?      @db.Text
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  serviceOrder          ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+  supervisorEmployee    Employee     @relation("SupervisorEmployeeEvaluations", fields: [supervisorEmployeeId], references: [id])
+  employee              Employee     @relation("EmployeeSupervisorEvaluations", fields: [employeeId], references: [id])
+
+  @@unique([serviceOrderId, employeeId])
+}
+
+model Material {
+  id            String                       @id @default(cuid())
+  name          String
+  unit          String
+  status        String                       @default("AVAILABLE")
+  currentStock  Decimal                      @default(0) @db.Decimal(12, 2)
+  minStock      Decimal                      @default(0) @db.Decimal(12, 2)
+  unitCost      Decimal?                     @db.Decimal(12, 2)
+  createdAt     DateTime                     @default(now())
+  updatedAt     DateTime                     @updatedAt
+  movements     MaterialStockMovement[]
+  serviceOrders ServiceOrderMaterial[]
+  requestItems  ServiceMaterialRequestItem[]
+}
+
+model MaterialStockMovement {
+  id             String        @id @default(cuid())
+  materialId     String
+  serviceOrderId String?
+  type           String
+  quantity       Decimal       @db.Decimal(12, 2)
+  unitCost       Decimal?      @db.Decimal(12, 2)
+  notes          String?       @db.Text
+  createdAt      DateTime      @default(now())
+  material       Material      @relation(fields: [materialId], references: [id])
+  serviceOrder   ServiceOrder? @relation(fields: [serviceOrderId], references: [id])
+}
+
+model Equipment {
+  id            String                  @id @default(cuid())
+  name          String
+  code          String?                 @unique
+  status        String
+  notes         String?                 @db.Text
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  usage         EquipmentUsage[]
+  serviceOrders ServiceOrderEquipment[]
+}
+
+model ServiceOrderMaterial {
+  id                String                     @id @default(cuid())
+  serviceOrderId    String
+  materialId        String
+  plannedQuantity   Decimal                    @default(0) @db.Decimal(12, 2)
+  separatedQuantity Decimal                    @default(0) @db.Decimal(12, 2)
+  deliveredQuantity Decimal                    @default(0) @db.Decimal(12, 2)
+  returnedQuantity  Decimal                    @default(0) @db.Decimal(12, 2)
+  consumedQuantity  Decimal                    @default(0) @db.Decimal(12, 2)
+  damagedQuantity   Decimal                    @default(0) @db.Decimal(12, 2)
+  lostQuantity      Decimal                    @default(0) @db.Decimal(12, 2)
+  status            ServiceOrderMaterialStatus @default(PENDING_SEPARATION)
+  notes             String?                    @db.Text
+  preparedByUserId  String?
+  deliveredByUserId String?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  serviceOrder      ServiceOrder               @relation(fields: [serviceOrderId], references: [id])
+  material          Material                   @relation(fields: [materialId], references: [id])
+}
+
+model ServiceOrderEquipment {
+  id                String                      @id @default(cuid())
+  serviceOrderId    String
+  equipmentId       String
+  status            ServiceOrderEquipmentStatus @default(RESERVED)
+  reservedAt        DateTime
+  deliveredAt       DateTime?
+  returnedAt        DateTime?
+  deliveredByUserId String?
+  returnedByUserId  String?
+  conditionBefore   String?                     @db.Text
+  conditionAfter    String?                     @db.Text
+  notes             String?                     @db.Text
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+  serviceOrder      ServiceOrder                @relation(fields: [serviceOrderId], references: [id])
+  equipment         Equipment                   @relation(fields: [equipmentId], references: [id])
+}
+
+model ServiceMaterialRequest {
+  id                String                       @id @default(cuid())
+  serviceOrderId    String
+  requestedByUserId String
+  status            MaterialRequestStatus        @default(PENDING)
+  priority          MaterialRequestPriority      @default(NORMAL)
+  reason            String                       @db.Text
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+  serviceOrder      ServiceOrder                 @relation(fields: [serviceOrderId], references: [id])
+  items             ServiceMaterialRequestItem[]
+}
+
+model ServiceMaterialRequestItem {
+  id         String                 @id @default(cuid())
+  requestId  String
+  materialId String
+  quantity   Decimal                @db.Decimal(12, 2)
+  notes      String?                @db.Text
+  request    ServiceMaterialRequest @relation(fields: [requestId], references: [id])
+  material   Material               @relation(fields: [materialId], references: [id])
+}
+
+model EquipmentUsage {
+  id             String       @id @default(cuid())
+  equipmentId    String
+  serviceOrderId String
+  startedAt      DateTime
+  endedAt        DateTime?
+  notes          String?      @db.Text
+  equipment      Equipment    @relation(fields: [equipmentId], references: [id])
+  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  serviceOrderId String?
+  customerId     String?
+  status         PaymentStatus @default(PENDING)
+  amount         Decimal       @db.Decimal(12, 2)
+  dueDate        DateTime
+  paidAt         DateTime?
+  method         String?
+  notes          String?       @db.Text
+  serviceOrder   ServiceOrder? @relation(fields: [serviceOrderId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Expense {
+  id             String        @id @default(cuid())
+  serviceOrderId String?
+  category       String
+  description    String
+  amount         Decimal       @db.Decimal(12, 2)
+  paidAt         DateTime?
+  notes          String?       @db.Text
+  serviceOrder   ServiceOrder? @relation(fields: [serviceOrderId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Warranty {
+  id             String       @id @default(cuid())
+  customerId     String
+  serviceOrderId String
+  startsAt       DateTime
+  endsAt         DateTime
+  terms          String?      @db.Text
+  isActive       Boolean      @default(true)
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  serviceOrder   ServiceOrder @relation(fields: [serviceOrderId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id])
+  title     String
+  message   String    @db.Text
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model ScheduleEvent {
+  id                 String                  @id @default(cuid())
+  title              String
+  description        String?                 @db.Text
+  type               ScheduleEventType
+  serviceOrderId     String?
+  inspectionId       String?
+  assignedUserId     String?
+  assignedEmployeeId String?
+  startsAt           DateTime
+  endsAt             DateTime
+  status             ScheduleEventStatus     @default(SCHEDULED)
+  priority           MaterialRequestPriority @default(NORMAL)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String
+  entity       String
+  entityId     String?
+  oldValueJson Json?
+  newValueJson Json?
+  ipAddress    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([entity])
+  @@index([entityId])
+  @@index([createdAt])
+}
+
+model AppState {
+  id        String   @id
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
