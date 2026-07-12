@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -38,8 +38,8 @@ import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRou
 
 import type { SiteBeforeAfter, SiteTestimonial } from "@/lib/types";
 
-const heroImage = "https://images.unsplash.com/photo-1600607687644-c7171b42498f?auto=format&fit=crop&w=2200&q=88";
-const detailImage = "https://images.unsplash.com/photo-1600585154526-990dced4db0d?auto=format&fit=crop&w=1600&q=84";
+const heroImage = "https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=2400&q=88";
+const detailImage = "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=1600&q=84";
 
 const serviceShowcase = [
   {
@@ -247,8 +247,9 @@ function SiteGlobalStyles() {
             transform: "none",
             transition: "none",
           },
-          ".alianca-orbit-ring, .alianca-orbit-upright, .alianca-floating-bubble, .alianca-marquee-track, .alianca-float-card, .alianca-bubble-source": {
+          ".alianca-orbit-ring, .alianca-orbit-upright, .alianca-floating-bubble, .alianca-marquee-track, .alianca-float-card, .alianca-bubble-source, .alianca-hero-bg": {
             animation: "none !important",
+            transition: "none !important",
           },
         },
       }}
@@ -386,19 +387,39 @@ function FloorScene() {
         position: "absolute",
         inset: 0,
         overflow: "hidden",
-        perspective: "1100px",
+        perspective: "1200px",
         pointerEvents: { xs: "none", md: "auto" },
       }}
     >
       <Box
+        className="alianca-hero-bg"
         sx={{
           position: "absolute",
-          inset: "-12% -8% -18%",
-          backgroundImage: `linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.17) 1px, transparent 1px), linear-gradient(135deg, rgba(9,168,229,.46), rgba(37,199,131,.18)), url(${heroImage})`,
-          backgroundSize: "86px 86px, 86px 86px, cover, cover",
-          backgroundPosition: "center",
-          transform: "rotateX(62deg) rotateZ(-8deg) translateY(18%) scale(1.16)",
+          inset: "-4% -5% -7%",
+          backgroundImage: `linear-gradient(135deg, rgba(15,33,105,.42), rgba(11,120,155,.2) 48%, rgba(37,199,131,.14)), url(${heroImage})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center bottom",
+          filter: "saturate(1.08) contrast(1.03)",
+          transform:
+            "translate3d(var(--hero-shift-x, 0px), var(--hero-shift-y, 0px), 0) rotateX(var(--hero-tilt-x, 0deg)) rotateY(var(--hero-tilt-y, 0deg)) scale(var(--hero-scale, 1.06))",
+          transformOrigin: "50% 55%",
+          transition: "transform 420ms cubic-bezier(.2,.8,.2,1)",
+          willChange: "transform",
+        }}
+      />
+      <Box
+        sx={{
+          position: "absolute",
+          inset: "35% -8% -25%",
+          backgroundImage:
+            "linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.14) 1px, transparent 1px), linear-gradient(135deg, rgba(9,168,229,.28), rgba(37,199,131,.1))",
+          backgroundSize: "86px 86px, 86px 86px, cover",
+          transform:
+            "rotateX(calc(64deg + var(--hero-grid-tilt-x, 0deg))) rotateY(var(--hero-grid-tilt-y, 0deg)) rotateZ(-8deg) translate3d(var(--hero-grid-shift-x, 0px), 14%, 0) scale(var(--hero-grid-scale, 1.1))",
           transformOrigin: "50% 70%",
+          transition: "transform 420ms cubic-bezier(.2,.8,.2,1)",
+          willChange: "transform",
+          opacity: 0.72,
         }}
       />
       <Box
@@ -1341,9 +1362,45 @@ export function PublicSiteView({
   testimonials: SiteTestimonial[];
 }) {
   const rootRef = useScrollReveal();
+  const heroInteractionRef = useRef<HTMLElement | null>(null);
   const publishedBeforeAfters = useMemo(() => beforeAfters.filter((item) => item.isPublished).slice(0, 6), [beforeAfters]);
   const publishedTestimonials = useMemo(() => testimonials.filter((item) => item.isPublished).slice(0, 6), [testimonials]);
   const testimonialRail = useMemo(() => [...publishedTestimonials, ...publishedTestimonials], [publishedTestimonials]);
+
+  function resetHeroMotion() {
+    const element = heroInteractionRef.current;
+    if (!element) return;
+    element.style.setProperty("--hero-tilt-x", "0deg");
+    element.style.setProperty("--hero-tilt-y", "0deg");
+    element.style.setProperty("--hero-shift-x", "0px");
+    element.style.setProperty("--hero-shift-y", "0px");
+    element.style.setProperty("--hero-scale", "1.06");
+    element.style.setProperty("--hero-grid-tilt-x", "0deg");
+    element.style.setProperty("--hero-grid-tilt-y", "0deg");
+    element.style.setProperty("--hero-grid-shift-x", "0px");
+    element.style.setProperty("--hero-grid-scale", "1.1");
+  }
+
+  function moveHeroMotion(event: ReactPointerEvent<HTMLElement>) {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const element = heroInteractionRef.current;
+    if (!element) return;
+
+    const rect = element.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width - 0.5;
+    const y = (event.clientY - rect.top) / rect.height - 0.5;
+    const distance = Math.min(1, Math.hypot(x, y) * 1.45);
+
+    element.style.setProperty("--hero-tilt-x", `${(-y * 2.2).toFixed(2)}deg`);
+    element.style.setProperty("--hero-tilt-y", `${(x * 2.8).toFixed(2)}deg`);
+    element.style.setProperty("--hero-shift-x", `${(-x * 10).toFixed(1)}px`);
+    element.style.setProperty("--hero-shift-y", `${(-y * 8).toFixed(1)}px`);
+    element.style.setProperty("--hero-scale", (1.06 + distance * 0.018).toFixed(3));
+    element.style.setProperty("--hero-grid-tilt-x", `${(-y * 1.8).toFixed(2)}deg`);
+    element.style.setProperty("--hero-grid-tilt-y", `${(x * 2.2).toFixed(2)}deg`);
+    element.style.setProperty("--hero-grid-shift-x", `${(-x * 8).toFixed(1)}px`);
+    element.style.setProperty("--hero-grid-scale", (1.1 + distance * 0.016).toFixed(3));
+  }
 
   return (
     <Box ref={rootRef} className="alianca-public-site" sx={{ bgcolor: "#f7fbff", color: "#11203d", overflowX: "hidden", position: "relative", isolation: "isolate" }}>
@@ -1352,7 +1409,10 @@ export function PublicSiteView({
       <HeroNav />
 
       <Box
+        ref={heroInteractionRef}
         component="section"
+        onPointerMove={moveHeroMotion}
+        onPointerLeave={resetHeroMotion}
         sx={{
           position: "relative",
           minHeight: { xs: 780, md: "96vh" },
@@ -1362,6 +1422,15 @@ export function PublicSiteView({
           overflow: "hidden",
           background: "linear-gradient(135deg, #0f2169 0%, #0b789b 48%, #25c783 100%)",
           zIndex: 2,
+          "--hero-tilt-x": "0deg",
+          "--hero-tilt-y": "0deg",
+          "--hero-shift-x": "0px",
+          "--hero-shift-y": "0px",
+          "--hero-scale": "1.06",
+          "--hero-grid-tilt-x": "0deg",
+          "--hero-grid-tilt-y": "0deg",
+          "--hero-grid-shift-x": "0px",
+          "--hero-grid-scale": "1.1",
         }}
       >
         <FloorScene />
