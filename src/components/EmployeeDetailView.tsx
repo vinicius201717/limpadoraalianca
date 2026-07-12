@@ -5,13 +5,15 @@ import { useState } from "react";
 import { Alert, Avatar, Box, Button, Checkbox, Chip, Divider, FormControlLabel, LinearProgress, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import AssignmentTurnedInRoundedIcon from "@mui/icons-material/AssignmentTurnedInRounded";
+import LockResetRoundedIcon from "@mui/icons-material/LockResetRounded";
 import SchoolRoundedIcon from "@mui/icons-material/SchoolRounded";
+import SecurityRoundedIcon from "@mui/icons-material/SecurityRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import TimelineRoundedIcon from "@mui/icons-material/TimelineRounded";
 
 import { formatCurrency, formatDate } from "@/lib/format";
 import { labelFor } from "@/lib/labels";
-import { canEvaluateEmployees } from "@/lib/permissions";
+import { canEvaluateEmployees, canManageEmployeeUserAccess } from "@/lib/permissions";
 import type { Employee, Evaluation, ServiceOrder } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
 import { useCurrentUser } from "./useCurrentUser";
@@ -76,7 +78,17 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
   const [needsTrainingInput, setNeedsTrainingInput] = useState(false);
   const [evaluationError, setEvaluationError] = useState("");
   const [evaluationNotice, setEvaluationNotice] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordNotice, setPasswordNotice] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
   const canEvaluate = canEvaluateEmployees(user?.role ?? "COLABORADOR");
+  const canManagePassword = canManageEmployeeUserAccess(user?.role ?? "COLABORADOR");
+  const isOwnAccessProfile = Boolean(user?.id && employee.userId === user.id);
+  const canChangePassword = Boolean(employee.userId && (canManagePassword || isOwnAccessProfile));
+  const requiresCurrentPassword = isOwnAccessProfile && !canManagePassword;
   const employeeEvaluations = localEvaluations
     .filter((evaluation) => evaluation.employeeId === employee.id)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -130,6 +142,46 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
     setNeedsTrainingInput(false);
   }
 
+  async function submitPasswordChange() {
+    setPasswordError("");
+    setPasswordNotice("");
+
+    if (!canChangePassword) {
+      setPasswordError("Perfil sem permissao para alterar esta senha.");
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordError("A nova senha deve ter pelo menos 6 caracteres.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("A confirmacao nao confere com a nova senha.");
+      return;
+    }
+
+    setPasswordBusy(true);
+    const response = await fetch(`/api/employees/${employee.id}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        currentPassword: requiresCurrentPassword ? currentPassword : undefined,
+        newPassword,
+      }),
+    });
+    const data = await response.json().catch(() => null);
+    setPasswordBusy(false);
+
+    if (!response.ok) {
+      setPasswordError(data?.message ?? "Nao foi possivel atualizar a senha.");
+      return;
+    }
+
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordNotice("Senha atualizada com sucesso.");
+  }
+
   return (
     <Stack spacing={3}>
       <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ md: "center" }} gap={2}>
@@ -167,6 +219,72 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
         <Kpi label="Ultima avaliacao" value={lastEvaluationAt ? formatDate(lastEvaluationAt) : "Sem data"} helper="Acompanhamento da lideranca" icon={<TimelineRoundedIcon />} />
         <Kpi label="Receita atribuida" value={formatCurrency(estimatedGeneratedRevenue)} helper="Rateio demonstrativo por equipe" icon={<StarRoundedIcon />} />
       </Box>
+
+      <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
+        <Stack spacing={2}>
+          <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5}>
+            <Box>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <SecurityRoundedIcon color="primary" />
+                <Typography variant="h6">Segurança de acesso</Typography>
+              </Stack>
+              <Typography variant="body2" color="text.secondary">
+                Atualize a senha usada por este colaborador para entrar no sistema.
+              </Typography>
+            </Box>
+            <Chip
+              color={employee.userId ? canChangePassword ? "primary" : "warning" : "default"}
+              label={employee.userId ? canChangePassword ? "Troca liberada" : "Sem permissao" : "Sem acesso ao sistema"}
+              variant="outlined"
+            />
+          </Stack>
+
+          {passwordNotice && <Alert severity="success">{passwordNotice}</Alert>}
+          {passwordError && <Alert severity="warning">{passwordError}</Alert>}
+          {!employee.userId ? (
+            <Alert severity="info">Este colaborador ainda nao possui usuario de acesso. Libere o acesso antes de definir uma senha.</Alert>
+          ) : !canChangePassword ? (
+            <Alert severity="info">Somente OWNER, GERENTE ou o proprio usuario vinculado podem alterar esta senha.</Alert>
+          ) : (
+            <Stack spacing={2}>
+              {requiresCurrentPassword && (
+                <TextField
+                  label="Senha atual"
+                  type="password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  fullWidth
+                />
+              )}
+              <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 1.5 }}>
+                <TextField
+                  label="Nova senha"
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  fullWidth
+                />
+                <TextField
+                  label="Confirmar nova senha"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  fullWidth
+                />
+              </Box>
+              <Button
+                variant="contained"
+                startIcon={<LockResetRoundedIcon />}
+                onClick={submitPasswordChange}
+                disabled={passwordBusy || !newPassword || !confirmPassword || (requiresCurrentPassword && !currentPassword)}
+                sx={{ alignSelf: "flex-start" }}
+              >
+                {passwordBusy ? "Atualizando..." : "Alterar senha"}
+              </Button>
+            </Stack>
+          )}
+        </Stack>
+      </Paper>
 
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
         <Stack spacing={2}>

@@ -35,6 +35,7 @@ import {
   canAccessAllServiceOrders,
   canAccessServiceOrderByAssignment,
   canCreateUserWithRole,
+  canManageEmployeeUserAccess,
   canManageTargetUserRole,
   canViewFinancialServiceOrders,
   canViewServiceOrderFinancials,
@@ -439,6 +440,48 @@ export function createSystemUser(input: {
   }
 
   queueDatabasePersist();
+  return { user, error: null };
+}
+
+export async function changeEmployeeAccessPassword(
+  employeeId: string,
+  input: { currentPassword?: string; newPassword: string },
+  actor: SessionUser,
+) {
+  const employee = db.employees.find((item) => item.id === employeeId);
+  if (!employee) return { user: null, error: "NOT_FOUND" as const };
+  if (!employee.userId) return { user: null, error: "NO_USER" as const };
+
+  const user = db.users.find((item) => item.id === employee.userId);
+  if (!user) return { user: null, error: "NO_USER" as const };
+
+  const isSelf = user.id === actor.id;
+  const canResetByRole =
+    canManageEmployeeUserAccess(actor.role) &&
+    user.role !== "OWNER" &&
+    (actor.role === "OWNER" || user.role !== "GERENTE");
+
+  if (!isSelf && !canResetByRole) return { user: null, error: "FORBIDDEN" as const };
+
+  if (isSelf && !canResetByRole) {
+    if (!input.currentPassword) return { user: null, error: "CURRENT_PASSWORD_REQUIRED" as const };
+    const validCurrentPassword = user.passwordHash ? await bcrypt.compare(input.currentPassword, user.passwordHash) : false;
+    if (!validCurrentPassword) return { user: null, error: "INVALID_CURRENT_PASSWORD" as const };
+  }
+
+  user.passwordHash = await bcrypt.hash(input.newPassword, 10);
+  user.updatedAt = new Date().toISOString();
+  recordAuditLog({
+    userId: actor.id,
+    action: isSelf ? "CHANGE_OWN_PASSWORD" : "RESET_EMPLOYEE_PASSWORD",
+    entity: "User",
+    entityId: user.id,
+    metadata: {
+      employeeId,
+      targetRole: user.role,
+    },
+  });
+
   return { user, error: null };
 }
 

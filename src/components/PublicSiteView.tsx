@@ -492,7 +492,7 @@ function QuoteRequestForm() {
             Receba contato pelo WhatsApp
           </Typography>
           <Typography color="text.secondary">
-            O pedido entra como lead no sistema da equipe comercial, com serviço, telefone e observações.
+            Informe seu telefone, o tipo de serviço e o que precisa ser avaliado. Nossa equipe retorna com orientação clara e próxima etapa.
           </Typography>
         </Box>
 
@@ -1029,7 +1029,7 @@ function GuaranteeOrbit() {
             Entrega com controle
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 220 }}>
-            Fotos, checklist e garantia conectados ao sistema interno da operação.
+            Fotos, checklist de cuidado e garantia para uma entrega mais segura.
           </Typography>
         </Stack>
       </Paper>
@@ -1370,22 +1370,36 @@ export function PublicSiteView({
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1.05fr .95fr" }, gap: { xs: 5, lg: 8 }, alignItems: "center" }}>
             <Stack spacing={3.2}>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                <Chip icon={<ShieldRoundedIcon />} label="20 anos de atuação" sx={{ bgcolor: "rgba(255,255,255,.14)", color: "white" }} />
-                <Chip icon={<CheckCircleRoundedIcon />} label="Serviços com garantia" sx={{ bgcolor: "rgba(255,255,255,.14)", color: "white" }} />
+                <Chip icon={<ShieldRoundedIcon />} label="Proteção do imóvel" sx={{ bgcolor: "rgba(255,255,255,.14)", color: "white" }} />
+                <Chip icon={<CheckCircleRoundedIcon />} label="Serviço com garantia" sx={{ bgcolor: "rgba(255,255,255,.14)", color: "white" }} />
                 <Chip icon={<WaterDropRoundedIcon />} label="Acabamento fino" sx={{ bgcolor: "rgba(255,255,255,.14)", color: "white" }} />
               </Stack>
               <Typography variant="h1" sx={{ fontSize: { xs: 48, sm: 68, lg: 88 }, lineHeight: 0.92, maxWidth: 980, letterSpacing: 0 }}>
-                Restauração e limpeza que valorizam seu imóvel.
+                Seu imóvel limpo, protegido e pronto para impressionar.
               </Typography>
               <Typography sx={{ fontSize: { xs: 18, md: 23 }, lineHeight: 1.48, color: "rgba(255,255,255,.88)", maxWidth: 760 }}>
-                A Aliança transforma pós-obra, mármore, granito e porcelanato em uma entrega limpa, documentada e pronta para impressionar.
+                Limpeza pós-obra, restauração de mármore, polimento de granito e cuidado fino para porcelanato com diagnóstico técnico, proteção das áreas sensíveis e entrega documentada.
               </Typography>
+              <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(3, minmax(0, 1fr))" }, gap: 1.2, maxWidth: 820 }}>
+                {[
+                  ["Avaliação técnica", "A equipe entende o piso antes de aplicar produto ou máquina."],
+                  ["Cuidado com detalhes", "Rodapés, metais, móveis e circulação são protegidos."],
+                  ["Resultado comprovado", "Fotos e revisão final deixam a entrega mais segura."],
+                ].map(([title, text]) => (
+                  <Box key={title} sx={{ p: 1.6, borderRadius: 1, bgcolor: "rgba(255,255,255,.1)", border: "1px solid rgba(255,255,255,.16)", backdropFilter: "blur(12px)" }}>
+                    <Typography fontWeight={950}>{title}</Typography>
+                    <Typography variant="body2" color="rgba(255,255,255,.76)">
+                      {text}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1.4}>
                 <Button href="#orcamento" component="a" variant="contained" size="large" endIcon={<ArrowForwardRoundedIcon />}>
-                  Pedir avaliação pelo WhatsApp
+                  Solicitar orçamento pelo WhatsApp
                 </Button>
-                <Button href="#servicos" component="a" variant="outlined" size="large" sx={{ color: "white", borderColor: "rgba(255,255,255,.56)" }}>
-                  Explorar experiência
+                <Button href="#antes-depois" component="a" variant="outlined" size="large" sx={{ color: "white", borderColor: "rgba(255,255,255,.56)" }}>
+                  Ver antes e depois
                 </Button>
               </Stack>
             </Stack>
@@ -1397,20 +1411,36 @@ export function PublicSiteView({
                   position: "absolute",
                   right: 0,
                   top: 30,
-                  width: 420,
+                  width: 440,
                   borderRadius: 1,
                   overflow: "hidden",
-                  bgcolor: "rgba(255,255,255,.12)",
+                  bgcolor: "rgba(255,255,255,.14)",
                   borderColor: "rgba(255,255,255,.3)",
                   backdropFilter: "blur(18px)",
                   boxShadow: "0 32px 90px rgba(0,0,0,.24)",
                 }}
               >
-                <Box component="img" src={detailImage} alt="Ambiente de alto padrão com piso restaurado" sx={{ width: "100%", height: 260, objectFit: "cover" }} />
-                <Stack spacing={1.3} sx={{ p: 2.4 }}>
-                  <Typography fontWeight={950}>Operação visível do começo ao fim</Typography>
+                <Box sx={{ position: "relative" }}>
+                  <Box component="img" src={detailImage} alt="Ambiente de alto padrão com piso restaurado" sx={{ width: "100%", height: 270, objectFit: "cover", display: "block" }} />
+                  <Chip
+                    icon={<WorkspacePremiumRoundedIcon />}
+                    label="Entrega premium"
+                    sx={{
+                      position: "absolute",
+                      left: 18,
+                      bottom: 18,
+                      bgcolor: "rgba(255,255,255,.94)",
+                      color: "#11203d",
+                      fontWeight: 950,
+                    }}
+                  />
+                </Box>
+                <Stack spacing={1.4} sx={{ p: 2.5 }}>
+                  <Typography fontWeight={950} sx={{ fontSize: 20 }}>
+                    Cuidado visível antes, durante e depois.
+                  </Typography>
                   <Typography color="rgba(255,255,255,.82)">
-                    Fotos, checklist, equipe e garantia ficam conectados ao sistema interno.
+                    O serviço começa protegendo o imóvel, segue por etapas técnicas e termina com revisão de acabamento para você receber tudo limpo, seguro e apresentável.
                   </Typography>
                   <Box sx={{ height: 4, bgcolor: "rgba(255,255,255,.18)", borderRadius: 999, overflow: "hidden" }}>
                     <Box sx={{ width: "100%", height: "100%", bgcolor: "#25c783", transformOrigin: "left", animation: "aliancaPulseLine 2.7s ease-in-out infinite" }} />
@@ -1421,9 +1451,9 @@ export function PublicSiteView({
                 variant="outlined"
                 sx={{
                   position: "absolute",
-                  left: 10,
-                  bottom: 36,
-                  width: 250,
+                  left: 4,
+                  bottom: 18,
+                  width: 280,
                   borderRadius: 1,
                   p: 2,
                   bgcolor: "rgba(255,255,255,.94)",
@@ -1434,12 +1464,39 @@ export function PublicSiteView({
                   <Stack direction="row" spacing={1} alignItems="center">
                     <AutoFixHighRoundedIcon color="secondary" />
                     <Typography color="#11203d" fontWeight={950}>
-                      Brilho recuperado
+                      Revisão de acabamento
                     </Typography>
                   </Stack>
                   <Typography variant="body2" color="text.secondary">
-                    Polimento, proteção e revisão final com padrão profissional.
+                    Brilho, limpeza fina, cantos e detalhes conferidos antes da entrega.
                   </Typography>
+                </Stack>
+              </Paper>
+              <Paper
+                variant="outlined"
+                sx={{
+                  position: "absolute",
+                  left: 44,
+                  top: 98,
+                  width: 230,
+                  borderRadius: 1,
+                  p: 1.8,
+                  bgcolor: "rgba(15,33,105,.72)",
+                  color: "white",
+                  borderColor: "rgba(255,255,255,.22)",
+                  backdropFilter: "blur(14px)",
+                  boxShadow: "0 22px 70px rgba(0,0,0,.18)",
+                }}
+              >
+                <Stack spacing={1.1}>
+                  {["Piso identificado", "Áreas sensíveis protegidas", "Produto adequado"].map((item) => (
+                    <Stack key={item} direction="row" spacing={0.8} alignItems="center">
+                      <CheckCircleRoundedIcon sx={{ color: "#25c783", fontSize: 20 }} />
+                      <Typography variant="body2" fontWeight={850}>
+                        {item}
+                      </Typography>
+                    </Stack>
+                  ))}
                 </Stack>
               </Paper>
             </Box>
@@ -1558,20 +1615,20 @@ export function PublicSiteView({
             <Reveal delay={160}>
               <Stack spacing={2.5}>
                 <Typography variant="overline" color="primary" fontWeight={900}>
-                  Sistema + site
+                  Serviço organizado
                 </Typography>
                 <Typography variant="h2" sx={{ fontSize: { xs: 34, md: 54 }, lineHeight: 1.05 }}>
-                  O cliente vê confiança. A empresa ganha organização.
+                  Seu piso tratado com cuidado do orçamento à entrega.
                 </Typography>
                 <Typography color="text.secondary" sx={{ fontSize: 18 }}>
-                  O orçamento vira lead no dashboard, o antes/depois vira vitrine, os depoimentos alimentam prova social e a operação interna ganha histórico.
+                  A Aliança usa gestão interna para organizar atendimento, equipe, produtos, fotos e pós-venda. Para você, isso aparece como prazo claro, proteção do imóvel e entrega bem documentada.
                 </Typography>
                 <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
                   {[
-                    ["Lead direto", "WhatsApp salvo no sistema para atendimento comercial."],
-                    ["Galeria viva", "Fotos cadastradas no dashboard aparecem na home."],
-                    ["Prova social", "Feedbacks publicados reforçam autoridade."],
-                    ["Pós-venda", "Garantia e registro visual aumentam percepção de valor."],
+                    ["Orçamento rápido", "Seu pedido chega organizado para retorno pelo WhatsApp."],
+                    ["Proteção do imóvel", "Pisos, rodapés, metais, marcenaria e áreas sensíveis recebem cuidado antes da execução."],
+                    ["Execução acompanhada", "A equipe segue etapas técnicas para reduzir retrabalho e preservar o acabamento."],
+                    ["Entrega documentada", "Fotos, orientação de conservação e garantia deixam o resultado mais seguro."],
                   ].map(([title, text]) => (
                     <Stack key={title} direction="row" spacing={1.2} alignItems="flex-start">
                       <CheckCircleRoundedIcon color="secondary" />
@@ -1624,10 +1681,10 @@ export function PublicSiteView({
                   Atendimento que vende
                 </Typography>
                 <Typography variant="h2" sx={{ fontSize: { xs: 34, md: 54 }, lineHeight: 1.05 }}>
-                  O cliente pede orçamento sem procurar login, senha ou sistema.
+                  Peça seu orçamento sem complicação.
                 </Typography>
                 <Typography color="text.secondary" sx={{ fontSize: 18 }}>
-                  A vitrine é pública, bonita e direta. O sistema interno fica invisível para o cliente, mas recebe o lead e organiza o atendimento.
+                  Você chama pelo formulário, informa o WhatsApp e recebe um retorno comercial com o serviço certo para seu piso, imóvel ou pós-obra.
                 </Typography>
                 <Stack spacing={1.2}>
                   {[
@@ -1686,7 +1743,7 @@ export function PublicSiteView({
                 Prova social em movimento.
               </Typography>
               <Typography color="text.secondary" sx={{ fontSize: 18 }}>
-                Depoimentos publicados no dashboard entram automaticamente nessa vitrine.
+                Depoimentos reais de clientes ajudam você a decidir com mais segurança.
               </Typography>
             </Stack>
           </Reveal>
