@@ -165,11 +165,11 @@ export async function ensureDatabaseReady() {
   if (globalStore.__floorRestorationHydrated) return;
   if (!globalStore.__floorRestorationHydrationPromise) {
     globalStore.__floorRestorationHydrationPromise = (async () => {
-      const state = readAppState(appStateId);
+      const state = await readAppState(appStateId);
       if (state) {
         applyDbState(state);
       } else {
-        writeAppState(appStateId, snapshotDbState());
+        await writeAppState(appStateId, snapshotDbState());
       }
       globalStore.__floorRestorationHydrated = true;
     })();
@@ -183,7 +183,7 @@ export function queueDatabasePersist() {
   globalStore.__floorRestorationPersistPromise = (globalStore.__floorRestorationPersistPromise ?? Promise.resolve())
     .catch(() => undefined)
     .then(async () => {
-      writeAppState(appStateId, snapshot);
+      await writeAppState(appStateId, snapshot);
     });
 }
 
