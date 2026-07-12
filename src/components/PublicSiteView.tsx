@@ -1451,13 +1451,14 @@ export function PublicSiteView({
                 variant="outlined"
                 sx={{
                   position: "absolute",
-                  left: 4,
-                  bottom: 18,
-                  width: 280,
+                  left: -34,
+                  bottom: 16,
+                  width: 230,
                   borderRadius: 1,
-                  p: 2,
+                  p: 1.7,
                   bgcolor: "rgba(255,255,255,.94)",
                   boxShadow: "0 26px 70px rgba(0,0,0,.2)",
+                  zIndex: 3,
                 }}
               >
                 <Stack spacing={1}>
