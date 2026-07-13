@@ -917,12 +917,19 @@ function CircularServiceCarousel() {
 
 function GuaranteeOrbit() {
   const orbitDuration = "32s";
+  const mobileOrbitSize = "min(70vw, 292px)";
+  const mobileHaloSize = "min(84vw, 350px)";
+  const mobileCoreSize = "min(54vw, 204px)";
 
   return (
     <Box
       sx={{
         position: "relative",
-        minHeight: { xs: 430, md: 540 },
+        minHeight: { xs: 370, sm: 430, md: 540 },
+        width: "100%",
+        maxWidth: { xs: 392, sm: 520, md: 620 },
+        mx: "auto",
+        px: { xs: 1, sm: 0 },
         display: "grid",
         placeItems: "center",
         overflow: "hidden",
@@ -931,8 +938,8 @@ function GuaranteeOrbit() {
       <Box
         sx={{
           position: "absolute",
-          width: { xs: 350, md: 474 },
-          height: { xs: 350, md: 474 },
+          width: { xs: mobileHaloSize, sm: 350, md: 474 },
+          height: { xs: mobileHaloSize, sm: 350, md: 474 },
           borderRadius: "50%",
           background:
             "radial-gradient(circle, rgba(255,255,255,.92) 0 31%, rgba(9,168,229,.06) 32% 33%, transparent 34% 100%)",
@@ -944,16 +951,20 @@ function GuaranteeOrbit() {
         className="alianca-orbit-ring"
         sx={{
           position: "absolute",
-          width: { xs: 308, md: 420 },
-          height: { xs: 308, md: 420 },
+          zIndex: 3,
+          width: { xs: mobileOrbitSize, sm: 308, md: 420 },
+          height: { xs: mobileOrbitSize, sm: 308, md: 420 },
           borderRadius: "50%",
           border: "1px solid rgba(9,168,229,.24)",
           animation: `aliancaOrbit ${orbitDuration} linear infinite`,
-          boxShadow: "0 0 0 18px rgba(9,168,229,.025), inset 0 0 42px rgba(9,168,229,.045)",
+          boxShadow: {
+            xs: "0 0 0 10px rgba(9,168,229,.025), inset 0 0 34px rgba(9,168,229,.045)",
+            sm: "0 0 0 18px rgba(9,168,229,.025), inset 0 0 42px rgba(9,168,229,.045)",
+          },
           "&:before": {
             content: '\"\"',
             position: "absolute",
-            inset: -7,
+            inset: { xs: -5, sm: -7 },
             borderRadius: "50%",
             border: "1px dashed rgba(37,199,131,.2)",
           },
@@ -989,18 +1000,27 @@ function GuaranteeOrbit() {
                     color="primary"
                     variant="outlined"
                     sx={{
+                      height: { xs: 28, sm: 32 },
+                      fontSize: { xs: 11, sm: 13 },
                       bgcolor: "rgba(255,255,255,.97)",
                       borderColor: index % 2 === 0 ? "rgba(9,168,229,.34)" : "rgba(37,199,131,.38)",
                       color: index % 2 === 0 ? "primary.main" : "secondary.dark",
                       fontWeight: 950,
-                      boxShadow: "0 14px 38px rgba(15,33,105,.13)",
+                      minWidth: { xs: 80, sm: 0 },
+                      boxShadow: {
+                        xs: "0 10px 28px rgba(15,33,105,.12)",
+                        sm: "0 14px 38px rgba(15,33,105,.13)",
+                      },
                       backdropFilter: "blur(12px)",
+                      "& .MuiChip-label": {
+                        px: { xs: 1, sm: 1.4 },
+                      },
                       "&:before": {
                         content: '\"\"',
-                        width: 7,
-                        height: 7,
+                        width: { xs: 6, sm: 7 },
+                        height: { xs: 6, sm: 7 },
                         borderRadius: "50%",
-                        mr: 0.8,
+                        mr: { xs: 0.55, sm: 0.8 },
                         bgcolor: index % 2 === 0 ? "primary.main" : "secondary.main",
                         boxShadow: index % 2 === 0 ? "0 0 14px rgba(9,168,229,.7)" : "0 0 14px rgba(37,199,131,.7)",
                       },
@@ -1018,13 +1038,15 @@ function GuaranteeOrbit() {
         sx={{
           position: "relative",
           zIndex: 2,
-          width: { xs: 222, md: 286 },
-          height: { xs: 222, md: 286 },
+          width: { xs: mobileCoreSize, sm: 222, md: 286 },
+          height: { xs: mobileCoreSize, sm: 222, md: 286 },
+          minWidth: { xs: 174, sm: 222, md: 286 },
+          minHeight: { xs: 174, sm: 222, md: 286 },
           borderRadius: "50%",
           display: "grid",
           placeItems: "center",
           textAlign: "center",
-          p: 3,
+          p: { xs: 1.6, sm: 3 },
           borderColor: "rgba(37,199,131,.3)",
           boxShadow:
             "0 38px 100px rgba(15,33,105,.15), 0 0 0 14px rgba(255,255,255,.7), inset 0 0 36px rgba(9,168,229,.06)",
@@ -1035,8 +1057,8 @@ function GuaranteeOrbit() {
         <Stack spacing={1.1} alignItems="center">
           <Box
             sx={{
-              width: 64,
-              height: 64,
+              width: { xs: 48, sm: 64 },
+              height: { xs: 48, sm: 64 },
               borderRadius: "50%",
               display: "grid",
               placeItems: "center",
@@ -1044,12 +1066,28 @@ function GuaranteeOrbit() {
               boxShadow: "inset 0 0 0 1px rgba(37,199,131,.18)",
             }}
           >
-            <ShieldRoundedIcon color="secondary" sx={{ fontSize: 38 }} />
+            <ShieldRoundedIcon color="secondary" sx={{ fontSize: { xs: 30, sm: 38 } }} />
           </Box>
-          <Typography variant="h5" fontWeight={950}>
+          <Typography
+            variant="h5"
+            fontWeight={950}
+            sx={{
+              fontSize: { xs: 22, sm: 24 },
+              lineHeight: 1.08,
+              maxWidth: { xs: 150, sm: 220 },
+            }}
+          >
             Entrega com controle
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 220 }}>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              maxWidth: { xs: 148, sm: 220 },
+              fontSize: { xs: 12, sm: 14 },
+              lineHeight: { xs: 1.32, sm: 1.43 },
+            }}
+          >
             Fotos, checklist de cuidado e garantia para uma entrega mais segura.
           </Typography>
         </Stack>
