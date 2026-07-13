@@ -7,6 +7,8 @@ import {
   Button,
   Chip,
   Container,
+  Dialog,
+  DialogContent,
   Divider,
   GlobalStyles,
   IconButton,
@@ -26,6 +28,7 @@ import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 import ConstructionRoundedIcon from "@mui/icons-material/ConstructionRounded";
 import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
@@ -109,6 +112,30 @@ const businessLocation = {
 const encodedLocationQuery = encodeURIComponent(businessLocation.query);
 const mapsEmbedUrl = `https://www.google.com/maps?q=${encodedLocationQuery}&output=embed`;
 const mapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodedLocationQuery}`;
+
+const quoteContacts = [
+  {
+    name: "Carol",
+    phone: "(62) 99422-2992",
+    role: "Atendimento comercial",
+    link: "https://wa.me/5562994222992?text=Ol%C3%A1%2C%20vim%20pelo%20site%20da%20Alian%C3%A7a%20e%20gostaria%20de%20solicitar%20um%20or%C3%A7amento.",
+    color: "#25c783",
+  },
+  {
+    name: "Igor Souza",
+    phone: "(62) 99404-6920",
+    role: "Orçamentos e visitas",
+    link: "https://wa.me/5562994046920?text=Ol%C3%A1%2C%20vim%20pelo%20site%20da%20Alian%C3%A7a%20e%20gostaria%20de%20solicitar%20um%20or%C3%A7amento.",
+    color: "#09a8e5",
+  },
+  {
+    name: "Taline Rabelo",
+    phone: "(62) 99143-4343",
+    role: "Atendimento ao cliente",
+    link: "https://wa.me/5562991434343?text=Ol%C3%A1%2C%20vim%20pelo%20site%20da%20Alian%C3%A7a%20e%20gostaria%20de%20solicitar%20um%20or%C3%A7amento.",
+    color: "#0f2169",
+  },
+];
 
 const heroStats = [
   ["7300+", "limpezas realizadas"],
@@ -578,7 +605,140 @@ function QuoteRequestForm() {
   );
 }
 
-function LocationMapSection() {
+function QuoteContactModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="sm"
+      PaperProps={{
+        sx: {
+          borderRadius: 1,
+          overflow: "hidden",
+          boxShadow: "0 38px 110px rgba(15,33,105,.32)",
+        },
+      }}
+    >
+      <Box
+        sx={{
+          position: "relative",
+          color: "white",
+          p: { xs: 2.4, md: 3 },
+          background:
+            "linear-gradient(135deg, rgba(15,33,105,.98), rgba(11,120,155,.96) 54%, rgba(37,199,131,.9))",
+          overflow: "hidden",
+          "&:before": {
+            content: '""',
+            position: "absolute",
+            inset: 0,
+            opacity: 0.35,
+            backgroundImage:
+              "linear-gradient(90deg, rgba(255,255,255,.14) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.12) 1px, transparent 1px)",
+            backgroundSize: "42px 42px",
+          },
+        }}
+      >
+        <Stack direction="row" justifyContent="space-between" spacing={2} sx={{ position: "relative" }}>
+          <Box>
+            <Typography variant="overline" fontWeight={900} color="rgba(255,255,255,.82)">
+              Orçamento pelo WhatsApp
+            </Typography>
+            <Typography variant="h4" fontWeight={950} sx={{ fontSize: { xs: 28, sm: 34 }, lineHeight: 1.05 }}>
+              Escolha um atendimento.
+            </Typography>
+            <Typography sx={{ mt: 1, color: "rgba(255,255,255,.82)", maxWidth: 470 }}>
+              Fale com a equipe comercial da Aliança e envie bairro, tipo de piso e prazo ideal para agilizar a avaliação.
+            </Typography>
+          </Box>
+          <IconButton
+            onClick={onClose}
+            aria-label="Fechar opções de WhatsApp"
+            sx={{
+              alignSelf: "flex-start",
+              color: "white",
+              bgcolor: "rgba(255,255,255,.12)",
+              "&:hover": { bgcolor: "rgba(255,255,255,.2)" },
+            }}
+          >
+            <CloseRoundedIcon />
+          </IconButton>
+        </Stack>
+      </Box>
+
+      <DialogContent sx={{ p: { xs: 2, sm: 2.4 }, bgcolor: "#f7fbff" }}>
+        <Stack spacing={1.4}>
+          {quoteContacts.map((contact) => (
+            <Paper
+              key={contact.phone}
+              component="a"
+              href={contact.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="outlined"
+              sx={{
+                p: 1.6,
+                borderRadius: 1,
+                textDecoration: "none",
+                color: "inherit",
+                borderColor: "rgba(9,168,229,.18)",
+                boxShadow: "0 14px 42px rgba(15,33,105,.08)",
+                transition: "transform .2s ease, box-shadow .2s ease, border-color .2s ease",
+                "&:hover": {
+                  transform: "translateY(-2px)",
+                  boxShadow: "0 20px 58px rgba(15,33,105,.12)",
+                  borderColor: contact.color,
+                },
+              }}
+            >
+              <Stack direction="row" spacing={1.6} alignItems="center">
+                <Box
+                  sx={{
+                    width: 54,
+                    height: 54,
+                    borderRadius: "50%",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "white",
+                    bgcolor: contact.color,
+                    boxShadow: `0 18px 42px ${contact.color}44`,
+                    flex: "0 0 auto",
+                  }}
+                >
+                  <LocalPhoneRoundedIcon />
+                </Box>
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography fontWeight={950} sx={{ fontSize: 18 }}>
+                    {contact.name}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {contact.role}
+                  </Typography>
+                  <Typography color="primary" fontWeight={900} sx={{ mt: 0.4 }}>
+                    {contact.phone}
+                  </Typography>
+                </Box>
+                <ArrowForwardRoundedIcon sx={{ color: contact.color }} />
+              </Stack>
+            </Paper>
+          ))}
+
+          <Button href="#orcamento" component="a" onClick={onClose} variant="text" sx={{ alignSelf: "center", fontWeight: 900 }}>
+            Prefiro preencher o formulário
+          </Button>
+        </Stack>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LocationMapSection({ onOpenQuoteContacts }: { onOpenQuoteContacts: () => void }) {
   return (
     <Box
       id="localizacao"
@@ -678,7 +838,7 @@ function LocationMapSection() {
                   <Button href={mapsDirectionsUrl} target="_blank" rel="noopener noreferrer" variant="contained" endIcon={<NearMeRoundedIcon />}>
                     Abrir rota
                   </Button>
-                  <Button href="#orcamento" component="a" variant="outlined" sx={{ color: "white", borderColor: "rgba(255,255,255,.45)" }}>
+                  <Button onClick={onOpenQuoteContacts} variant="outlined" sx={{ color: "white", borderColor: "rgba(255,255,255,.45)" }}>
                     Solicitar orçamento
                   </Button>
                 </Box>
@@ -690,10 +850,11 @@ function LocationMapSection() {
             <Paper
               variant="outlined"
               sx={{
-                minHeight: { xs: 420, sm: 500, lg: 520 },
+                minHeight: { xs: 0, lg: 520 },
                 borderRadius: 1,
                 overflow: "hidden",
-                position: "relative",
+                display: "grid",
+                gridTemplateRows: "auto minmax(320px, 1fr) auto",
                 borderColor: "rgba(9,168,229,.22)",
                 boxShadow: "0 30px 90px rgba(15,33,105,.14)",
                 bgcolor: "white",
@@ -701,18 +862,9 @@ function LocationMapSection() {
             >
               <Box
                 sx={{
-                  position: "absolute",
-                  left: { xs: 14, sm: 22 },
-                  top: { xs: 14, sm: 22 },
-                  right: { xs: 14, sm: "auto" },
-                  zIndex: 2,
-                  maxWidth: { xs: "calc(100% - 28px)", sm: 360 },
-                  p: 1.4,
-                  borderRadius: 1,
-                  bgcolor: "rgba(255,255,255,.94)",
-                  border: "1px solid rgba(9,168,229,.18)",
-                  boxShadow: "0 18px 50px rgba(15,33,105,.14)",
-                  backdropFilter: "blur(16px)",
+                  p: { xs: 1.6, sm: 2 },
+                  borderBottom: "1px solid rgba(9,168,229,.14)",
+                  background: "linear-gradient(135deg, rgba(255,255,255,.98), rgba(238,248,252,.96))",
                 }}
               >
                 <Stack direction="row" spacing={1} alignItems="center">
@@ -737,7 +889,7 @@ function LocationMapSection() {
                 sx={{
                   width: "100%",
                   height: "100%",
-                  minHeight: { xs: 420, sm: 500, lg: 520 },
+                  minHeight: { xs: 320, sm: 380, lg: 390 },
                   border: 0,
                   display: "block",
                   filter: "saturate(1.04) contrast(1.02)",
@@ -746,21 +898,13 @@ function LocationMapSection() {
 
               <Box
                 sx={{
-                  position: "absolute",
-                  left: { xs: 14, sm: 22 },
-                  right: { xs: 14, sm: 22 },
-                  bottom: { xs: 14, sm: 22 },
-                  zIndex: 2,
                   display: "grid",
                   gridTemplateColumns: { xs: "1fr", sm: "1fr auto" },
                   gap: 1,
                   alignItems: "center",
-                  p: 1.4,
-                  borderRadius: 1,
-                  bgcolor: "rgba(15,33,105,.86)",
+                  p: { xs: 1.6, sm: 2 },
+                  bgcolor: "#0f2169",
                   color: "white",
-                  border: "1px solid rgba(255,255,255,.18)",
-                  backdropFilter: "blur(16px)",
                 }}
               >
                 <Box>
@@ -769,7 +913,7 @@ function LocationMapSection() {
                     Informe bairro, tipo de piso e prazo para receber a avaliação correta.
                   </Typography>
                 </Box>
-                <Button href="#orcamento" component="a" variant="contained" size="small" endIcon={<ArrowForwardRoundedIcon />}>
+                <Button onClick={onOpenQuoteContacts} variant="contained" size="small" endIcon={<ArrowForwardRoundedIcon />}>
                   Pedir avaliação
                 </Button>
               </Box>
@@ -1557,7 +1701,7 @@ function TestimonialCard({ item }: { item: SiteTestimonial }) {
   );
 }
 
-function HeroNav() {
+function HeroNav({ onOpenQuoteContacts }: { onOpenQuoteContacts: () => void }) {
   const links = [
     ["Serviços", "#servicos"],
     ["Método", "#metodo"],
@@ -1603,7 +1747,7 @@ function HeroNav() {
             ))}
           </Stack>
 
-          <Button href="#orcamento" component="a" variant="contained" startIcon={<LocalPhoneRoundedIcon />} sx={{ display: { xs: "none", sm: "inline-flex" } }}>
+          <Button onClick={onOpenQuoteContacts} variant="contained" startIcon={<LocalPhoneRoundedIcon />} sx={{ display: { xs: "none", sm: "inline-flex" } }}>
             Solicitar orçamento
           </Button>
         </Stack>
@@ -1621,9 +1765,12 @@ export function PublicSiteView({
 }) {
   const rootRef = useScrollReveal();
   const heroInteractionRef = useRef<HTMLElement | null>(null);
+  const [quoteContactsOpen, setQuoteContactsOpen] = useState(false);
   const publishedBeforeAfters = useMemo(() => beforeAfters.filter((item) => item.isPublished).slice(0, 6), [beforeAfters]);
   const publishedTestimonials = useMemo(() => testimonials.filter((item) => item.isPublished).slice(0, 6), [testimonials]);
   const testimonialRail = useMemo(() => [...publishedTestimonials, ...publishedTestimonials], [publishedTestimonials]);
+  const openQuoteContacts = () => setQuoteContactsOpen(true);
+  const closeQuoteContacts = () => setQuoteContactsOpen(false);
 
   function resetHeroMotion() {
     const element = heroInteractionRef.current;
@@ -1664,7 +1811,8 @@ export function PublicSiteView({
     <Box ref={rootRef} className="alianca-public-site" sx={{ bgcolor: "#f7fbff", color: "#11203d", overflowX: "hidden", position: "relative", isolation: "isolate" }}>
       <SiteGlobalStyles />
       <FloatingBubbles />
-      <HeroNav />
+      <HeroNav onOpenQuoteContacts={openQuoteContacts} />
+      <QuoteContactModal open={quoteContactsOpen} onClose={closeQuoteContacts} />
 
       <Box
         ref={heroInteractionRef}
@@ -1722,7 +1870,7 @@ export function PublicSiteView({
                 ))}
               </Box>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1.4}>
-                <Button href="#orcamento" component="a" variant="contained" size="large" endIcon={<ArrowForwardRoundedIcon />}>
+                <Button onClick={openQuoteContacts} variant="contained" size="large" endIcon={<ArrowForwardRoundedIcon />}>
                   Solicitar orçamento pelo WhatsApp
                 </Button>
                 <Button href="#antes-depois" component="a" variant="outlined" size="large" sx={{ color: "white", borderColor: "rgba(255,255,255,.56)" }}>
@@ -2132,7 +2280,7 @@ export function PublicSiteView({
         </Container>
       </Box>
 
-      <LocationMapSection />
+      <LocationMapSection onOpenQuoteContacts={openQuoteContacts} />
 
       <Box component="section" sx={{ py: { xs: 7, md: 11 }, position: "relative", color: "white", overflow: "hidden", zIndex: 2 }}>
         <Box component="img" src={heroImage} alt="" sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
@@ -2146,7 +2294,7 @@ export function PublicSiteView({
               <Typography sx={{ fontSize: 20, maxWidth: 760, color: "rgba(255,255,255,.82)" }}>
                 Peça uma avaliação. A equipe entende o piso, indica o processo e registra tudo para uma entrega segura.
               </Typography>
-              <Button href="#orcamento" component="a" variant="contained" size="large" endIcon={<LocalPhoneRoundedIcon />}>
+              <Button onClick={openQuoteContacts} variant="contained" size="large" endIcon={<LocalPhoneRoundedIcon />}>
                 Solicitar orçamento agora
               </Button>
             </Stack>
