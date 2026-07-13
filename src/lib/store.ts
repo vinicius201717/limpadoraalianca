@@ -113,6 +113,7 @@ const globalStore = globalThis as typeof globalThis & {
   __floorRestorationHydrated?: boolean;
   __floorRestorationHydrationPromise?: Promise<void>;
   __floorRestorationPersistPromise?: Promise<void>;
+  __floorRestorationDatabaseAvailable?: boolean;
 };
 
 if (!globalStore.__floorRestorationDb) {
@@ -173,10 +174,12 @@ export async function ensureDatabaseReady() {
         } else {
           await writeAppState(appStateId, snapshotDbState());
         }
+        globalStore.__floorRestorationDatabaseAvailable = true;
         globalStore.__floorRestorationHydrated = true;
       } catch (error) {
-        globalStore.__floorRestorationHydrationPromise = undefined;
-        throw error;
+        globalStore.__floorRestorationDatabaseAvailable = false;
+        globalStore.__floorRestorationHydrated = true;
+        console.error("[store] database unavailable, using bundled in-memory state", error);
       }
     })();
   }
@@ -185,6 +188,7 @@ export async function ensureDatabaseReady() {
 
 export function queueDatabasePersist() {
   if (!globalStore.__floorRestorationHydrated) return;
+  if (globalStore.__floorRestorationDatabaseAvailable === false) return;
   const snapshot = snapshotDbState();
   globalStore.__floorRestorationPersistPromise = (globalStore.__floorRestorationPersistPromise ?? Promise.resolve())
     .catch(() => undefined)
@@ -195,6 +199,10 @@ export function queueDatabasePersist() {
 
 export async function flushDatabasePersistence() {
   await globalStore.__floorRestorationPersistPromise;
+}
+
+export function isDatabasePersistenceAvailable() {
+  return globalStore.__floorRestorationDatabaseAvailable !== false;
 }
 
 export function toPublicUser(user: SystemUser) {

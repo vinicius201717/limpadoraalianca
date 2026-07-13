@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { createPublicQuoteLead, ensureDatabaseReady } from "@/lib/store";
+import { createPublicQuoteLead, ensureDatabaseReady, isDatabasePersistenceAvailable } from "@/lib/store";
 
 const quoteRequestSchema = z.object({
   name: z.string().trim().max(120).optional().default(""),
@@ -11,13 +11,7 @@ const quoteRequestSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  let databaseAvailable = true;
-  try {
-    await ensureDatabaseReady();
-  } catch (error) {
-    databaseAvailable = false;
-    console.error("[public-quote-request] database unavailable, accepting request in transient memory", error);
-  }
+  await ensureDatabaseReady();
 
   const parsed = quoteRequestSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -25,5 +19,6 @@ export async function POST(request: NextRequest) {
   }
 
   const lead = createPublicQuoteLead(parsed.data);
-  return NextResponse.json({ ok: true, leadId: lead.id, persisted: databaseAvailable }, { status: databaseAvailable ? 201 : 202 });
+  const persisted = isDatabasePersistenceAvailable();
+  return NextResponse.json({ ok: true, leadId: lead.id, persisted }, { status: persisted ? 201 : 202 });
 }
