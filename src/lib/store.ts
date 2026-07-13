@@ -166,13 +166,18 @@ export async function ensureDatabaseReady() {
   if (globalStore.__floorRestorationHydrated) return;
   if (!globalStore.__floorRestorationHydrationPromise) {
     globalStore.__floorRestorationHydrationPromise = (async () => {
-      const state = await readAppState(appStateId);
-      if (state) {
-        applyDbState(state);
-      } else {
-        await writeAppState(appStateId, snapshotDbState());
+      try {
+        const state = await readAppState(appStateId);
+        if (state) {
+          applyDbState(state);
+        } else {
+          await writeAppState(appStateId, snapshotDbState());
+        }
+        globalStore.__floorRestorationHydrated = true;
+      } catch (error) {
+        globalStore.__floorRestorationHydrationPromise = undefined;
+        throw error;
       }
-      globalStore.__floorRestorationHydrated = true;
     })();
   }
   await globalStore.__floorRestorationHydrationPromise;

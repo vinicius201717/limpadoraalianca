@@ -11,7 +11,13 @@ const quoteRequestSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  await ensureDatabaseReady();
+  let databaseAvailable = true;
+  try {
+    await ensureDatabaseReady();
+  } catch (error) {
+    databaseAvailable = false;
+    console.error("[public-quote-request] database unavailable, accepting request in transient memory", error);
+  }
 
   const parsed = quoteRequestSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -19,5 +25,5 @@ export async function POST(request: NextRequest) {
   }
 
   const lead = createPublicQuoteLead(parsed.data);
-  return NextResponse.json({ ok: true, leadId: lead.id }, { status: 201 });
+  return NextResponse.json({ ok: true, leadId: lead.id, persisted: databaseAvailable }, { status: databaseAvailable ? 201 : 202 });
 }
