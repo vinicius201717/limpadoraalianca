@@ -20,6 +20,7 @@ import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
 import AssignmentTurnedInRoundedIcon from "@mui/icons-material/AssignmentTurnedInRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import AutoFixHighRoundedIcon from "@mui/icons-material/AutoFixHighRounded";
+import AccessTimeRoundedIcon from "@mui/icons-material/AccessTimeRounded";
 import BoltRoundedIcon from "@mui/icons-material/BoltRounded";
 import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
@@ -28,7 +29,10 @@ import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 import ConstructionRoundedIcon from "@mui/icons-material/ConstructionRounded";
 import GroupsRoundedIcon from "@mui/icons-material/GroupsRounded";
+import LocationOnRoundedIcon from "@mui/icons-material/LocationOnRounded";
 import LocalPhoneRoundedIcon from "@mui/icons-material/LocalPhoneRounded";
+import MapRoundedIcon from "@mui/icons-material/MapRounded";
+import NearMeRoundedIcon from "@mui/icons-material/NearMeRounded";
 import QueryStatsRoundedIcon from "@mui/icons-material/QueryStatsRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
 import ShieldRoundedIcon from "@mui/icons-material/ShieldRounded";
@@ -93,6 +97,18 @@ const serviceShowcase = [
 ];
 
 const services = serviceShowcase.map((service) => service.title);
+
+const businessLocation = {
+  address: "Avenida Bela Vista, 957 - Jardim Bela Vista - Goiânia/GO",
+  cep: "CEP: 74912-261",
+  coverage: "Atendemos Goiânia e região metropolitana",
+  query: "Avenida Bela Vista, 957 - Jardim Bela Vista, Goiânia - GO, 74912-261",
+  hours: ["Segunda a sexta, 8h às 18h", "Sábado, 8h às 13h"],
+};
+
+const encodedLocationQuery = encodeURIComponent(businessLocation.query);
+const mapsEmbedUrl = `https://www.google.com/maps?q=${encodedLocationQuery}&output=embed`;
+const mapsDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodedLocationQuery}`;
 
 const heroStats = [
   ["7300+", "limpezas realizadas"],
@@ -559,6 +575,209 @@ function QuoteRequestForm() {
         </Stack>
       </Stack>
     </Paper>
+  );
+}
+
+function LocationMapSection() {
+  return (
+    <Box
+      id="localizacao"
+      component="section"
+      sx={{
+        py: { xs: 6, md: 10 },
+        position: "relative",
+        zIndex: 2,
+        overflow: "hidden",
+        background: "linear-gradient(135deg, #f7fbff 0%, #eef8fc 48%, #effaf5 100%)",
+        "&:before": {
+          content: '""',
+          position: "absolute",
+          inset: 0,
+          opacity: 0.46,
+          backgroundImage:
+            "linear-gradient(90deg, rgba(9,168,229,.08) 1px, transparent 1px), linear-gradient(0deg, rgba(37,199,131,.08) 1px, transparent 1px)",
+          backgroundSize: "56px 56px",
+          pointerEvents: "none",
+        },
+      }}
+    >
+      <Container maxWidth="xl" sx={{ position: "relative" }}>
+        <Reveal>
+          <Stack spacing={2} sx={{ maxWidth: 820, mb: { xs: 3.5, md: 5 } }}>
+            <Typography variant="overline" color="primary" fontWeight={900}>
+              Localização
+            </Typography>
+            <Typography variant="h2" sx={{ fontSize: { xs: 34, md: 54 }, lineHeight: 1.05, letterSpacing: 0 }}>
+              Base em Goiânia para atender com agilidade e cuidado.
+            </Typography>
+            <Typography color="text.secondary" sx={{ fontSize: 18 }}>
+              A Aliança atende residências, condomínios, obras e imóveis de alto padrão em Goiânia e região metropolitana.
+            </Typography>
+          </Stack>
+        </Reveal>
+
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: ".82fr 1.18fr" }, gap: { xs: 2.5, lg: 3 }, alignItems: "stretch" }}>
+          <Reveal delay={80}>
+            <Paper
+              variant="outlined"
+              sx={{
+                height: "100%",
+                minHeight: { xs: 0, lg: 520 },
+                p: { xs: 2.4, md: 3 },
+                borderRadius: 1,
+                color: "white",
+                bgcolor: "#0f2169",
+                borderColor: "rgba(255,255,255,.16)",
+                boxShadow: "0 28px 90px rgba(15,33,105,.18)",
+                position: "relative",
+                overflow: "hidden",
+                "&:before": {
+                  content: '""',
+                  position: "absolute",
+                  inset: 0,
+                  background:
+                    "linear-gradient(135deg, rgba(9,168,229,.28), transparent 42%), linear-gradient(315deg, rgba(37,199,131,.2), transparent 48%)",
+                  pointerEvents: "none",
+                },
+              }}
+            >
+              <Stack spacing={2.4} sx={{ position: "relative", height: "100%" }}>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  <Chip icon={<LocationOnRoundedIcon />} label="Base em Goiânia" sx={{ color: "white", bgcolor: "rgba(255,255,255,.12)" }} />
+                  <Chip icon={<MapRoundedIcon />} label="Região metropolitana" sx={{ color: "white", bgcolor: "rgba(255,255,255,.12)" }} />
+                </Stack>
+
+                <Box>
+                  <Typography color="rgba(255,255,255,.72)" fontWeight={800}>
+                    Endereço
+                  </Typography>
+                  <Typography variant="h5" fontWeight={950} sx={{ lineHeight: 1.18, mt: 0.5 }}>
+                    {businessLocation.address}
+                  </Typography>
+                  <Typography color="rgba(255,255,255,.76)" sx={{ mt: 0.7 }}>
+                    {businessLocation.cep}
+                  </Typography>
+                </Box>
+
+                <Divider sx={{ borderColor: "rgba(255,255,255,.16)" }} />
+
+                <Stack spacing={1.4}>
+                  <Stack direction="row" spacing={1.2} alignItems="center">
+                    <NearMeRoundedIcon sx={{ color: "#25c783" }} />
+                    <Typography fontWeight={900}>{businessLocation.coverage}</Typography>
+                  </Stack>
+                  {businessLocation.hours.map((hour) => (
+                    <Stack key={hour} direction="row" spacing={1.2} alignItems="center">
+                      <AccessTimeRoundedIcon sx={{ color: "#09a8e5" }} />
+                      <Typography color="rgba(255,255,255,.82)">{hour}</Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+
+                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.2, mt: { xs: 0, lg: "auto" } }}>
+                  <Button href={mapsDirectionsUrl} target="_blank" rel="noopener noreferrer" variant="contained" endIcon={<NearMeRoundedIcon />}>
+                    Abrir rota
+                  </Button>
+                  <Button href="#orcamento" component="a" variant="outlined" sx={{ color: "white", borderColor: "rgba(255,255,255,.45)" }}>
+                    Solicitar orçamento
+                  </Button>
+                </Box>
+              </Stack>
+            </Paper>
+          </Reveal>
+
+          <Reveal delay={160}>
+            <Paper
+              variant="outlined"
+              sx={{
+                minHeight: { xs: 420, sm: 500, lg: 520 },
+                borderRadius: 1,
+                overflow: "hidden",
+                position: "relative",
+                borderColor: "rgba(9,168,229,.22)",
+                boxShadow: "0 30px 90px rgba(15,33,105,.14)",
+                bgcolor: "white",
+              }}
+            >
+              <Box
+                sx={{
+                  position: "absolute",
+                  left: { xs: 14, sm: 22 },
+                  top: { xs: 14, sm: 22 },
+                  right: { xs: 14, sm: "auto" },
+                  zIndex: 2,
+                  maxWidth: { xs: "calc(100% - 28px)", sm: 360 },
+                  p: 1.4,
+                  borderRadius: 1,
+                  bgcolor: "rgba(255,255,255,.94)",
+                  border: "1px solid rgba(9,168,229,.18)",
+                  boxShadow: "0 18px 50px rgba(15,33,105,.14)",
+                  backdropFilter: "blur(16px)",
+                }}
+              >
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Box sx={{ width: 38, height: 38, borderRadius: 1, display: "grid", placeItems: "center", bgcolor: "rgba(37,199,131,.12)", color: "secondary.main" }}>
+                    <LocationOnRoundedIcon />
+                  </Box>
+                  <Box>
+                    <Typography fontWeight={950}>Veja no mapa</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {businessLocation.address}
+                    </Typography>
+                  </Box>
+                </Stack>
+              </Box>
+
+              <Box
+                component="iframe"
+                title="Mapa da Aliança Limpeza e Restauração em Goiânia"
+                src={mapsEmbedUrl}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                sx={{
+                  width: "100%",
+                  height: "100%",
+                  minHeight: { xs: 420, sm: 500, lg: 520 },
+                  border: 0,
+                  display: "block",
+                  filter: "saturate(1.04) contrast(1.02)",
+                }}
+              />
+
+              <Box
+                sx={{
+                  position: "absolute",
+                  left: { xs: 14, sm: 22 },
+                  right: { xs: 14, sm: 22 },
+                  bottom: { xs: 14, sm: 22 },
+                  zIndex: 2,
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", sm: "1fr auto" },
+                  gap: 1,
+                  alignItems: "center",
+                  p: 1.4,
+                  borderRadius: 1,
+                  bgcolor: "rgba(15,33,105,.86)",
+                  color: "white",
+                  border: "1px solid rgba(255,255,255,.18)",
+                  backdropFilter: "blur(16px)",
+                }}
+              >
+                <Box>
+                  <Typography fontWeight={950}>Atendimento local com operação organizada.</Typography>
+                  <Typography variant="body2" color="rgba(255,255,255,.76)">
+                    Informe bairro, tipo de piso e prazo para receber a avaliação correta.
+                  </Typography>
+                </Box>
+                <Button href="#orcamento" component="a" variant="contained" size="small" endIcon={<ArrowForwardRoundedIcon />}>
+                  Pedir avaliação
+                </Button>
+              </Box>
+            </Paper>
+          </Reveal>
+        </Box>
+      </Container>
+    </Box>
   );
 }
 
@@ -1344,6 +1563,7 @@ function HeroNav() {
     ["Método", "#metodo"],
     ["Antes/depois", "#antes-depois"],
     ["Avaliações", "#avaliacoes"],
+    ["Localização", "#localizacao"],
   ];
 
   return (
@@ -1911,6 +2131,8 @@ export function PublicSiteView({
           </Box>
         </Container>
       </Box>
+
+      <LocationMapSection />
 
       <Box component="section" sx={{ py: { xs: 7, md: 11 }, position: "relative", color: "white", overflow: "hidden", zIndex: 2 }}>
         <Box component="img" src={heroImage} alt="" sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
