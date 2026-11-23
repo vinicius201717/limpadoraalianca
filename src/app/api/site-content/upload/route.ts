@@ -1,6 +1,7 @@
+import { withDatabase } from "@/lib/with-database";
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
-import { extname, join } from "path";
+import { getSupabaseStorageConfig, supabaseServerHeaders } from "@/lib/checklist-photo-storage";
+import { extname } from "path";
 
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -16,7 +17,7 @@ const allowedTypes = new Map([
   ["image/avif", ".avif"],
 ]);
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -36,19 +37,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Formato de imagem nao permitido." }, { status: 400 });
   }
 
-  const maxSizeInBytes = 8 * 1024 * 1024;
+  const maxSizeInBytes = 3 * 1024 * 1024;
   if (file.size > maxSizeInBytes) {
-    return NextResponse.json({ message: "Imagem maior que 8 MB." }, { status: 400 });
+    return NextResponse.json({ message: "Imagem maior que 3 MB." }, { status: 400 });
   }
 
   const originalExtension = extname(file.name).toLowerCase();
   const safeExtension = allowedTypes.has(file.type) && originalExtension === extension ? originalExtension : extension;
   const fileName = `${Date.now()}-${randomUUID()}${safeExtension}`;
-  const uploadDir = join(process.cwd(), "public", "uploads", "site");
-  const filePath = join(uploadDir, fileName);
+  const config = getSupabaseStorageConfig();
+  if (!config) return NextResponse.json({ message: "Armazenamento não configurado." }, { status: 503 });
+  const bucket = `${config.bucket}-site-public`;
+  const headers = { ...supabaseServerHeaders(config.serviceRoleKey), "Content-Type": "application/json" };
+  const existing = await fetch(`${config.url}/storage/v1/bucket/${encodeURIComponent(bucket)}`, { headers, cache: "no-store" });
+  if (existing.status === 404) {
+    const created = await fetch(`${config.url}/storage/v1/bucket`, { method: "POST", headers, body: JSON.stringify({ id: bucket, name: bucket, public: true, file_size_limit: maxSizeInBytes, allowed_mime_types: Array.from(allowedTypes.keys()) }) });
+    if (!created.ok && created.status !== 409) throw new Error("Não foi possível criar o armazenamento do site.");
+  } else if (!existing.ok) throw new Error("Armazenamento indisponível.");
+  const uploaded = await fetch(`${config.url}/storage/v1/object/${encodeURIComponent(bucket)}/${fileName}`, { method: "POST", headers: { ...supabaseServerHeaders(config.serviceRoleKey), "Content-Type": file.type, "x-upsert": "false" }, body: await file.arrayBuffer() });
+  if (!uploaded.ok) return NextResponse.json({ message: "Não foi possível salvar a imagem." }, { status: 502 });
+  return NextResponse.json({ url: `${config.url}/storage/v1/object/public/${encodeURIComponent(bucket)}/${fileName}` }, { status: 201 });
 
-  await mkdir(uploadDir, { recursive: true });
-  await writeFile(filePath, Buffer.from(await file.arrayBuffer()));
-
-  return NextResponse.json({ url: `/uploads/site/${fileName}` }, { status: 201 });
 }
+
+export const POST = withDatabase(POSTHandler);

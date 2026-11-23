@@ -1,15 +1,16 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canCreateManager, canManageUsers } from "@/lib/permissions";
-import { changeUserRole, toPublicUser } from "@/lib/store";
+import { changeUserRole, flushDatabasePersistence, toPublicUser } from "@/lib/store";
 
 const changeRoleSchema = z.object({
   role: z.enum(["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO", "COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"]),
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -36,5 +37,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const user = changeUserRole(id, parsed.data.role, auth.user);
   if (!user) return NextResponse.json({ message: "Usuario nao encontrado ou alteracao sem permissao." }, { status: 404 });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({ message: "Perfil alterado com sucesso.", user: toPublicUser(user) });
 }
+
+export const POST = withDatabase(POSTHandler);

@@ -78,6 +78,7 @@ async function clearDatabase() {
 }
 
 async function main() {
+  if (process.env.ALLOW_LEGACY_DEMO !== "yes" || process.env.NODE_ENV === "production") throw new Error("Ferramenta legada bloqueada. Para a base operacional use os comandos db:backup, db:restore-empty ou db:bootstrap-empty. Não execute seeds de demonstração em produção.");
   await clearDatabase();
 
   const passwordHash = await bcrypt.hash("123456", 10);

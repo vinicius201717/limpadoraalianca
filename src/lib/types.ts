@@ -12,8 +12,13 @@ export type SessionUser = {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: UserRole;
   isActive: boolean;
+  canViewFinancials?: boolean;
+  avatarUrl?: string;
+  sessionVersion?: number;
+  mustChangePassword?: boolean;
 };
 
 export type SystemUser = SessionUser & {
@@ -24,7 +29,7 @@ export type SystemUser = SessionUser & {
   updatedAt: string;
 };
 
-export type EmployeeStatus = "ACTIVE" | "INACTIVE" | "ON_LEAVE" | "FIRED";
+export type EmployeeStatus = "ACTIVE" | "VACATION" | "ON_LEAVE" | "SUSPENDED" | "INACTIVE" | "FIRED";
 export type LeadStatus =
   | "NEW"
   | "CONTACTED"
@@ -96,8 +101,12 @@ export type ScheduleEventType =
   | "AFTER_SALES"
   | "INTERNAL_TASK";
 export type ScheduleEventStatus = "SCHEDULED" | "IN_PROGRESS" | "DONE" | "CANCELED" | "DELAYED";
+export type ServiceExpenseCategory = "GASOLINA" | "ALMOCO" | "MATERIAL_OU_PRODUTO" | "OUTROS";
+export type CompanyFeedbackCategory = "SUGESTAO" | "RECLAMACAO" | "ELOGIO" | "MELHORIA" | "SEGURANCA" | "OUTROS";
+export type CompanyFeedbackStatus = "NEW" | "REVIEWED" | "ARCHIVED";
 
 export type Customer = {
+  address?: string;
   id: string;
   name: string;
   phone: string;
@@ -111,6 +120,7 @@ export type Customer = {
 };
 
 export type Lead = {
+  customerId?: string;
   id: string;
   name: string;
   phone: string;
@@ -123,6 +133,10 @@ export type Lead = {
 };
 
 export type Inspection = {
+  customerId?: string;
+  leadId?: string;
+  address?: string;
+  notes?: string;
   id: string;
   customerName: string;
   surfaceType: string;
@@ -134,6 +148,15 @@ export type Inspection = {
 };
 
 export type Quote = {
+  customerId?: string;
+  leadId?: string;
+  inspectionId?: string;
+  title?: string;
+  serviceType?: ServiceType;
+  address?: string;
+  description?: string;
+  serviceOrderId?: string;
+  approvedAt?: string;
   id: string;
   customerName: string;
   status: QuoteStatus;
@@ -200,6 +223,7 @@ export type ServiceOrderChecklistItem = {
   assignedEmployeeId?: string;
   assignedEmployeeIds?: string[];
   completedByEmployeeId?: string;
+  completedByEmployeeIds?: string[];
   startedByUserId?: string;
   completedByUserId?: string;
   validatedByUserId?: string;
@@ -359,6 +383,14 @@ export type ServiceOrder = {
   scheduledStart: string;
   scheduledEnd: string;
   status: ServiceOrderStatus;
+  clientAccessCode?: string;
+  clientAccessEnabled?: boolean;
+  clientRating?: number;
+  clientFeedback?: string;
+  clientDeliverySignatureUrl?: string;
+  clientDeliveryAcceptedBy?: string;
+  clientDeliverySignedAt?: string;
+  clientDeliveryIp?: string;
   supervisorEmployeeId?: string;
   supervisorUserId?: string;
   assignedByUserId?: string;
@@ -371,6 +403,29 @@ export type ServiceOrder = {
   tasks: ServiceOrderTask[];
   revenue: number;
   expenses: number;
+};
+
+export type ServiceExpense = {
+  id: string;
+  serviceOrderId: string;
+  employeeId: string;
+  employeeName: string;
+  category: ServiceExpenseCategory;
+  amount: number;
+  notes: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CompanyFeedback = {
+  id: string;
+  submittedByUserId: string;
+  category: CompanyFeedbackCategory;
+  message: string;
+  status: CompanyFeedbackStatus;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Evaluation = {
@@ -417,6 +472,7 @@ export type SupervisorEvaluation = {
 };
 
 export type Material = {
+  archivedAt?: string;
   id: string;
   name: string;
   unit: string;
@@ -427,6 +483,7 @@ export type Material = {
 };
 
 export type Equipment = {
+  archivedAt?: string;
   id: string;
   name: string;
   code: string;
@@ -518,4 +575,11 @@ export type DashboardData = {
   financialOrders: ServiceOrder[];
   topEmployees: Employee[];
   sourceLabel: string;
+};
+
+export type Warranty = {
+  id: string; serviceOrderId: string; title: string; customerName: string;
+  startsAt: string; endsAt: string; terms: string;
+  status: "ACTIVE" | "CLAIM_OPEN" | "CLOSED" | "CANCELED";
+  claimNotes: string; createdAt: string; updatedAt: string;
 };

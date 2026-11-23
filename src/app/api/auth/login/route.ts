@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -5,17 +6,20 @@ import { AUTH_COOKIE, SESSION_MAX_AGE_SECONDS, signSession } from "@/lib/auth";
 import { verifyUserCredentials } from "@/lib/store";
 
 const schema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
+  login: z.string().trim().min(3).optional(),
+  email: z.string().trim().optional(),
+  password: z.string().min(6).max(128),
+}).refine((value) => Boolean(value.login || value.email), {
+  message: "Informe telefone ou e-mail.",
 });
 
-export async function POST(request: NextRequest) {
-  const parsed = schema.safeParse(await request.json());
+async function POSTHandler(request: NextRequest) {
+  const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ message: "Dados invalidos." }, { status: 400 });
   }
 
-  const user = await verifyUserCredentials(parsed.data.email, parsed.data.password);
+  const user = await verifyUserCredentials(parsed.data.login ?? parsed.data.email ?? "", parsed.data.password);
 
   if (!user) {
     return NextResponse.json({ message: "Credenciais invalidas." }, { status: 401 });
@@ -27,8 +31,12 @@ export async function POST(request: NextRequest) {
       id: user.id,
       name: user.name,
       email: user.email,
+      phone: user.phone,
       role: user.role,
       isActive: user.isActive,
+      canViewFinancials: user.canViewFinancials,
+      avatarUrl: user.avatarUrl,
+      mustChangePassword: user.mustChangePassword,
     },
   });
 
@@ -42,3 +50,5 @@ export async function POST(request: NextRequest) {
 
   return response;
 }
+
+export const POST = withDatabase(POSTHandler);

@@ -16,6 +16,8 @@ import type {
   ServiceOrderEmployee,
   ServiceOrderEquipment,
   ServiceOrderMaterial,
+  ServiceExpense,
+  CompanyFeedback,
   ServiceMaterialRequest,
   ServiceMaterialRequestItem,
   SessionUser,
@@ -29,7 +31,7 @@ import type {
 } from "./types";
 
 export const users: SessionUser[] = [
-  { id: "usr-owner", name: "Dono", email: "dono@empresa.com", role: "OWNER", isActive: true },
+  { id: "usr-owner", name: "Igor de Freitas Mota Souza", email: "dono@empresa.com", role: "OWNER", isActive: true },
   { id: "usr-gerente", name: "Gerente", email: "gerente@empresa.com", role: "GERENTE", isActive: true },
   { id: "usr-supervisor", name: "Carlos Nunes", email: "supervisor@empresa.com", role: "SUPERVISOR_OBRA", isActive: true },
   { id: "usr-supervisor-2", name: "Luciana Freitas", email: "luciana@empresa.com", role: "SUPERVISOR_OBRA", isActive: true },
@@ -1077,9 +1079,12 @@ export const mostExecutedServices: ChartPoint[] = [
   { label: "Impermeabilizacao", value: 14 },
 ];
 
+export const serviceExpenses: ServiceExpense[] = [];
+export const companyFeedbacks: CompanyFeedback[] = [];
+
 const cleanSimulationOwner = users.find((user) => user.role === "OWNER") ?? {
   id: "usr-owner",
-  name: "Dono",
+  name: "Igor de Freitas Mota Souza",
   email: "dono@empresa.com",
   role: "OWNER" as const,
   isActive: true,
@@ -1098,6 +1103,8 @@ serviceOrderChecklistPhotos.length = 0;
 serviceOrderChecklistEvents.length = 0;
 serviceOrderMaterials.length = 0;
 serviceOrderEquipment.length = 0;
+serviceExpenses.length = 0;
+companyFeedbacks.length = 0;
 materials.length = 0;
 equipment.length = 0;
 materialRequests.length = 0;

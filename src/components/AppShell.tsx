@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AppBar,
   Avatar,
@@ -40,20 +40,29 @@ import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import PaidRoundedIcon from "@mui/icons-material/PaidRounded";
 import PersonAddAltRoundedIcon from "@mui/icons-material/PersonAddAltRounded";
 import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded";
+import RateReviewRoundedIcon from "@mui/icons-material/RateReviewRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import SlideshowRoundedIcon from "@mui/icons-material/SlideshowRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import SupervisorAccountRoundedIcon from "@mui/icons-material/SupervisorAccountRounded";
+import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import { canUseWhatsApp } from "@/lib/whatsapp-schema";
 
-import type { UserRole } from "@/lib/types";
+import { canViewServiceOrderFinancials } from "@/lib/permissions";
+import type { SessionUser } from "@/lib/types";
 import { useColorMode } from "./AppThemeProvider";
 import { useCurrentUser } from "./useCurrentUser";
 
 const drawerWidth = 286;
+const fallbackShellUser = { role: "COLABORADOR", canViewFinancials: false } as const satisfies Pick<
+  SessionUser,
+  "role" | "canViewFinancials"
+>;
 
 const menuItems = [
+  { label: "Assistente WhatsApp", href: "/assistente-whatsapp", icon: <WhatsAppIcon /> },
   { label: "Dashboard", href: "/dashboard", icon: <DashboardRoundedIcon /> },
   { label: "Apresentacao", href: "/apresentacao", icon: <SlideshowRoundedIcon /> },
   { label: "Usuarios", href: "/usuarios", icon: <SupervisorAccountRoundedIcon /> },
@@ -67,6 +76,7 @@ const menuItems = [
   { label: "Supervisores", href: "/supervisores", icon: <SupervisorAccountRoundedIcon /> },
   { label: "Almoxarifado", href: "/almoxarifado", icon: <Inventory2RoundedIcon /> },
   { label: "Avaliacoes", href: "/avaliacoes", icon: <StarRoundedIcon /> },
+  { label: "Feedback da empresa", href: "/feedback-empresa", icon: <RateReviewRoundedIcon /> },
   { label: "Materiais", href: "/materiais", icon: <Inventory2RoundedIcon /> },
   { label: "Equipamentos", href: "/equipamentos", icon: <FolderSpecialRoundedIcon /> },
   { label: "Financeiro", href: "/financeiro", icon: <PaidRoundedIcon /> },
@@ -76,19 +86,27 @@ const menuItems = [
   { label: "Configuracoes", href: "/configuracoes", icon: <SettingsRoundedIcon /> },
 ];
 
-function canSeeMenuItem(href: string, role: UserRole) {
+function canSeeMenuItem(href: string, user: Pick<SessionUser, "role" | "canViewFinancials">, hasAssignedServiceOrders = false) {
+  const role = user.role;
+  if (href === "/assistente-whatsapp") return canUseWhatsApp(role);
+  if (href === "/feedback-empresa") return true;
   if (role === "ALMOXARIFADO") {
-    return ["/dashboard", "/almoxarifado", "/materiais", "/equipamentos"].includes(href);
+    if (href === "/ordens-servico") return hasAssignedServiceOrders;
+    return ["/dashboard", "/almoxarifado", "/materiais", "/equipamentos", "/configuracoes"].includes(href);
   }
-  if (href === "/usuarios" || href === "/configuracoes") return role === "OWNER";
-  if (href === "/financeiro") return role === "OWNER" || role === "FINANCEIRO";
+  if (href === "/usuarios") return role === "OWNER";
+  if (href === "/configuracoes") return true;
+  if (href === "/financeiro") return canViewServiceOrderFinancials(user);
   if (href === "/almoxarifado" || href === "/materiais" || href === "/equipamentos") {
     return role === "OWNER" || role === "GERENTE";
   }
   if (href === "/orcamentos" || href === "/leads" || href === "/clientes") {
     return role === "OWNER" || role === "GERENTE" || role === "COMERCIAL";
   }
-  if (href === "/supervisores" || href === "/relatorios" || href === "/apresentacao") {
+  if (href === "/relatorios") {
+    return role === "OWNER" || role === "GERENTE" || canViewServiceOrderFinancials(user);
+  }
+  if (href === "/supervisores" || href === "/apresentacao") {
     return role === "OWNER" || role === "GERENTE";
   }
   if (href === "/colaboradores") {
@@ -100,9 +118,17 @@ function canSeeMenuItem(href: string, role: UserRole) {
   return true;
 }
 
-function Sidebar({ onNavigate, role }: { onNavigate?: () => void; role: UserRole }) {
+function Sidebar({
+  onNavigate,
+  user,
+  hasAssignedServiceOrders,
+}: {
+  onNavigate?: () => void;
+  user: Pick<SessionUser, "role" | "canViewFinancials">;
+  hasAssignedServiceOrders: boolean;
+}) {
   const pathname = usePathname();
-  const visibleItems = menuItems.filter((item) => canSeeMenuItem(item.href, role));
+  const visibleItems = menuItems.filter((item) => canSeeMenuItem(item.href, user, hasAssignedServiceOrders));
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", p: 2 }}>
@@ -173,8 +199,9 @@ function Sidebar({ onNavigate, role }: { onNavigate?: () => void; role: UserRole
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const publicPaths = ["/", "/login", "/acompanhe-servico"];
 
-  if (pathname === "/" || pathname === "/login") {
+  if (publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
     return <>{children}</>;
   }
 
@@ -189,12 +216,52 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
   const { mode, toggleColorMode } = useColorMode();
   const { user } = useCurrentUser();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hasWarehouseAssignedOrders, setHasWarehouseAssignedOrders] = useState(false);
 
   const pageTitle = useMemo(() => {
     const current = menuItems.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
     return current?.label ?? "Sistema";
   }, [pathname]);
-  const role = user?.role ?? "COLABORADOR";
+  const shellUser = useMemo(() => user ?? fallbackShellUser, [user]);
+  const effectiveHasWarehouseAssignedOrders = shellUser.role === "ALMOXARIFADO" && hasWarehouseAssignedOrders;
+  const visibleMenuHrefs = useMemo(
+    () => menuItems.filter((item) => canSeeMenuItem(item.href, shellUser, effectiveHasWarehouseAssignedOrders)).map((item) => item.href),
+    [shellUser, effectiveHasWarehouseAssignedOrders],
+  );
+
+  useEffect(() => {
+    if (user?.role !== "ALMOXARIFADO") {
+      return;
+    }
+
+    let mounted = true;
+    fetch("/api/service-orders", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (mounted) setHasWarehouseAssignedOrders(Boolean(data?.serviceOrders?.length));
+      })
+      .catch(() => {
+        if (mounted) setHasWarehouseAssignedOrders(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const timers = visibleMenuHrefs.map((href, index) =>
+      window.setTimeout(() => {
+        router.prefetch(href);
+      }, 250 + index * 90),
+    );
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [router, user?.id, visibleMenuHrefs]);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -215,7 +282,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
             },
           }}
         >
-          <Sidebar role={role} />
+          <Sidebar user={shellUser} hasAssignedServiceOrders={effectiveHasWarehouseAssignedOrders} />
         </Drawer>
       ) : (
         <Drawer
@@ -224,7 +291,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
           ModalProps={{ keepMounted: true }}
           PaperProps={{ sx: { width: 304 } }}
         >
-          <Sidebar role={role} onNavigate={() => setMobileOpen(false)} />
+          <Sidebar user={shellUser} hasAssignedServiceOrders={effectiveHasWarehouseAssignedOrders} onNavigate={() => setMobileOpen(false)} />
         </Drawer>
       )}
 
@@ -270,6 +337,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
               }}
             />
 
+            {user && canUseWhatsApp(user.role) && <Tooltip title="Assistente WhatsApp"><IconButton component={Link} href="/assistente-whatsapp" aria-label="Abrir assistente WhatsApp" sx={{ color: "success.main" }}><WhatsAppIcon /></IconButton></Tooltip>}
             <Tooltip title={mode === "light" ? "Tema escuro" : "Tema claro"}>
               <IconButton aria-label="Alternar tema" onClick={toggleColorMode}>
                 {mode === "light" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}
@@ -277,7 +345,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
             </Tooltip>
 
             <Stack direction="row" spacing={1} alignItems="center" sx={{ display: { xs: "none", sm: "flex" } }}>
-              <Avatar sx={{ width: 36, height: 36, bgcolor: "secondary.main" }}>{user?.name?.slice(0, 1) ?? "D"}</Avatar>
+              <Avatar src={user?.avatarUrl} sx={{ width: 36, height: 36, bgcolor: "secondary.main" }}>{user?.name?.slice(0, 1) ?? "D"}</Avatar>
               <Box sx={{ minWidth: 0, maxWidth: 160 }}>
                 <Typography variant="body2" fontWeight={800} noWrap>
                   {user?.name ?? "Dono"}

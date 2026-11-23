@@ -23,10 +23,12 @@ import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import PaidRoundedIcon from "@mui/icons-material/PaidRounded";
 import PersonAddAltRoundedIcon from "@mui/icons-material/PersonAddAltRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import RateReviewRoundedIcon from "@mui/icons-material/RateReviewRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 
 import { formatCurrency, formatDateTime } from "@/lib/format";
+import { canViewServiceOrderFinancials } from "@/lib/permissions";
 import {
   employees as demoEmployees,
   materialRequests as demoMaterialRequests,
@@ -332,6 +334,7 @@ export function DashboardView({
   siteTestimonials?: SiteTestimonial[];
 }) {
   const { user } = useCurrentUser();
+  const canViewFinancials = canViewServiceOrderFinancials(user);
   const linkedEmployee = employees.find((employee) => employee.userId === user?.id);
   const assignedOrders =
     user?.role === "SUPERVISOR_OBRA"
@@ -369,6 +372,26 @@ export function DashboardView({
               description: "Operacao, equipe, financeiro, estoque, agenda e avaliacoes em uma leitura unica.",
               chips: ["acesso completo", "alertas operacionais"],
             };
+  const visibleMetrics = canViewFinancials
+    ? data.metrics
+    : data.metrics
+        .filter((metric) => !metric.label.includes("Receita"))
+        .map((metric) =>
+          metric.label.includes("Orcamentos")
+            ? { ...metric, trend: "Aguardando resposta comercial" }
+            : metric,
+        );
+  const visibleAttentionItems = canViewFinancials
+    ? data.attentionItems
+    : data.attentionItems.map((item) =>
+        item.title.includes("Orcamentos")
+          ? { ...item, description: "Propostas aguardam retorno do cliente, sem exibicao de valores." }
+          : item,
+      );
+  const clientConfirmedDeliveries = serviceOrders
+    .filter((order) => Boolean(order.clientDeliverySignedAt))
+    .slice()
+    .sort((a, b) => Date.parse(b.clientDeliverySignedAt ?? "") - Date.parse(a.clientDeliverySignedAt ?? ""));
 
   if (user?.role === "ALMOXARIFADO") {
     const operationalOrders = serviceOrders
@@ -755,7 +778,7 @@ export function DashboardView({
           gap: 2,
         }}
       >
-        {data.metrics.map((metric) => (
+        {visibleMetrics.map((metric) => (
           <MetricCard key={metric.label} metric={metric} />
         ))}
       </Box>
@@ -771,11 +794,66 @@ export function DashboardView({
           <Chip icon={<WarningAmberRoundedIcon />} color="warning" label="Prioridades do dia" />
         </Stack>
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" }, gap: 2 }}>
-          {data.attentionItems.map((item) => (
+          {visibleAttentionItems.map((item) => (
             <AttentionCard key={item.title} item={item} />
           ))}
         </Box>
       </Paper>
+
+      {(user?.role === "OWNER" || user?.role === "GERENTE") && (
+        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2 }}>
+          <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5} sx={{ mb: 2 }}>
+            <Box>
+              <Typography variant="h6">Entregas confirmadas pelo cliente</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Assinaturas, avaliacao do servico e comentarios recebidos pela pagina do cliente.
+              </Typography>
+            </Box>
+            <Chip icon={<RateReviewRoundedIcon />} color={clientConfirmedDeliveries.length ? "success" : "default"} label={`${clientConfirmedDeliveries.length} confirmadas`} />
+          </Stack>
+          {clientConfirmedDeliveries.length === 0 ? (
+            <Box sx={{ p: 2, borderRadius: 2, bgcolor: "background.default", border: 1, borderColor: "divider" }}>
+              <Typography variant="body2" color="text.secondary">
+                Nenhuma entrega foi assinada pelo cliente ainda.
+              </Typography>
+            </Box>
+          ) : (
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 1.5 }}>
+              {clientConfirmedDeliveries.slice(0, 4).map((order) => (
+                <Box key={order.id} sx={{ p: 1.6, borderRadius: 2, bgcolor: "background.default", border: 1, borderColor: "divider" }}>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} justifyContent="space-between">
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography fontWeight={900} noWrap>
+                        {order.customerName}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" noWrap>
+                        {order.title} - {formatDateTime(order.clientDeliverySignedAt ?? order.scheduledEnd)}
+                      </Typography>
+                      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: 0.8 }}>
+                        <StarRoundedIcon fontSize="small" color="secondary" />
+                        <Typography variant="body2" fontWeight={900}>
+                          {order.clientRating ? `${order.clientRating}/5` : "Sem nota"}
+                        </Typography>
+                      </Stack>
+                      {order.clientFeedback && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.7 }}>
+                          {order.clientFeedback}
+                        </Typography>
+                      )}
+                    </Box>
+                    <Stack spacing={1} alignItems={{ xs: "flex-start", sm: "flex-end" }}>
+                      <StatusChip value={order.status} />
+                      <Button component={Link} href={`/ordens-servico/${order.id}`} size="small" endIcon={<ArrowForwardRoundedIcon />}>
+                        Ver OS
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Box>
+              ))}
+            </Box>
+          )}
+        </Paper>
+      )}
 
       {(user?.role === "OWNER" || user?.role === "GERENTE") && (
         <SiteContentManager beforeAfters={siteBeforeAfters} testimonials={siteTestimonials} />
@@ -822,29 +900,38 @@ export function DashboardView({
             <Typography variant="h6" sx={{ mb: 2 }}>
               Resultado previsto
             </Typography>
-            <Stack spacing={2}>
-              {data.financialOrders.map((order) => {
-                const profit = order.revenue - order.expenses;
-                const margin = Math.round((profit / order.revenue) * 100);
+            {canViewFinancials ? (
+              <Stack spacing={2}>
+                {data.financialOrders.map((order) => {
+                  const profit = order.revenue - order.expenses;
+                  const margin = order.revenue > 0 ? Math.round((profit / order.revenue) * 100) : 0;
 
-                return (
-                  <Box key={order.id}>
-                    <Stack direction="row" justifyContent="space-between" gap={1}>
-                      <Typography variant="body2" fontWeight={850} noWrap>
-                        {order.customerName}
+                  return (
+                    <Box key={order.id}>
+                      <Stack direction="row" justifyContent="space-between" gap={1}>
+                        <Typography variant="body2" fontWeight={850} noWrap>
+                          {order.customerName}
+                        </Typography>
+                        <Typography variant="body2" color="success.main" fontWeight={900}>
+                          {formatCurrency(profit)}
+                        </Typography>
+                      </Stack>
+                      <LinearProgress value={margin} variant="determinate" sx={{ mt: 0.8, height: 8, borderRadius: 999 }} />
+                      <Typography variant="caption" color="text.secondary">
+                        Margem de {margin}% sobre {formatCurrency(order.revenue)}
                       </Typography>
-                      <Typography variant="body2" color="success.main" fontWeight={900}>
-                        {formatCurrency(profit)}
-                      </Typography>
-                    </Stack>
-                    <LinearProgress value={margin} variant="determinate" sx={{ mt: 0.8, height: 8, borderRadius: 999 }} />
-                    <Typography variant="caption" color="text.secondary">
-                      Margem de {margin}% sobre {formatCurrency(order.revenue)}
-                    </Typography>
-                  </Box>
-                );
-              })}
-            </Stack>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            ) : (
+              <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, bgcolor: "background.default" }}>
+                <Typography fontWeight={900}>Financeiro restrito</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Valores, saldos e margens aparecem somente para dono, financeiro e gerente autorizado.
+                </Typography>
+              </Paper>
+            )}
           </Box>
         </Paper>
 
@@ -879,12 +966,23 @@ export function DashboardView({
       </Box>
 
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3, minmax(0, 1fr))" }, gap: 2 }}>
-        <BarPanel
-          title="Faturamento por mes"
-          data={data.revenueByMonth}
-          suffix="k"
-          emptyMessage="Sem faturamento registrado ainda. Ao criar uma OS com valor fechado, o grafico passa a mostrar o total por mes."
-        />
+        {canViewFinancials ? (
+          <BarPanel
+            title="Faturamento por mes"
+            data={data.revenueByMonth}
+            suffix="k"
+            emptyMessage="Sem faturamento registrado ainda. Ao criar uma OS com valor fechado, o grafico passa a mostrar o total por mes."
+          />
+        ) : (
+          <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>
+              Faturamento por mes
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Grafico financeiro restrito ao dono, financeiro e gerente autorizado.
+            </Typography>
+          </Paper>
+        )}
         <BarPanel
           title="Servicos por status"
           data={data.servicesByStatus}

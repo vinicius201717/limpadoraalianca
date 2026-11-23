@@ -1,11 +1,12 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { canManageChecklistForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canValidateChecklistItem } from "@/lib/permissions";
-import { getChecklistForServiceOrder, validateChecklistItem } from "@/lib/store";
+import { flushDatabasePersistence, getChecklistForServiceOrder, validateChecklistItem } from "@/lib/store";
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id, itemId } = await context.params;
@@ -16,5 +17,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
   const result = validateChecklistItem(id, itemId, auth.user);
   if (result.error === "NOT_DONE") return NextResponse.json({ message: "Somente item concluido pode ser validado." }, { status: 400 });
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

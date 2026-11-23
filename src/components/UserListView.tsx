@@ -22,6 +22,7 @@ import {
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 
 import { formatDateTime } from "@/lib/format";
+import { labelFor } from "@/lib/labels";
 import type { Employee, SessionUser, UserRole } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
 
@@ -39,6 +40,11 @@ type UserRow = SessionUser & {
   lastLoginAt?: string;
   createdAt?: string;
 };
+
+function displayEmail(email?: string) {
+  if (!email) return "-";
+  return email.endsWith("@telefone.alianca.local") ? "-" : email;
+}
 
 export function UserListView({ users, employees }: { users: UserRow[]; employees: Employee[] }) {
   const [rows, setRows] = useState<UserRow[]>(
@@ -83,8 +89,25 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
       setError(data?.message ?? "Nao foi possivel alterar perfil.");
       return;
     }
-    setRows((current) => current.map((row) => (row.id === userId ? { ...row, role } : row)));
+    setRows((current) => current.map((row) => (row.id === userId ? { ...row, ...(data?.user ?? {}), role } : row)));
     setNotice(data?.message ?? "Perfil alterado com sucesso.");
+  }
+
+  async function setFinancialAccess(userId: string, canViewFinancials: boolean) {
+    setNotice("");
+    setError("");
+    const response = await fetch(`/api/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ canViewFinancials }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      setError(data?.message ?? "Nao foi possivel alterar o acesso financeiro.");
+      return;
+    }
+    setRows((current) => current.map((row) => (row.id === userId ? { ...row, ...(data?.user ?? {}), canViewFinancials } : row)));
+    setNotice(canViewFinancials ? "Acesso financeiro liberado para gerente." : "Acesso financeiro removido do gerente.");
   }
 
   return (
@@ -111,9 +134,11 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
           <TableHead>
             <TableRow>
               <TableCell>Nome</TableCell>
+              <TableCell>Telefone</TableCell>
               <TableCell>E-mail</TableCell>
               <TableCell>Role</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell>Acesso financeiro</TableCell>
               <TableCell>Colaborador vinculado</TableCell>
               <TableCell>Ultimo acesso</TableCell>
               <TableCell>Criado em</TableCell>
@@ -129,12 +154,27 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
                   <TableCell>
                     <Typography fontWeight={850}>{row.name}</Typography>
                   </TableCell>
-                  <TableCell>{row.email}</TableCell>
+                  <TableCell>{row.phone ?? "-"}</TableCell>
+                  <TableCell>{displayEmail(row.email)}</TableCell>
                   <TableCell>
                     <StatusChip value={row.role} />
                   </TableCell>
                   <TableCell>
                     <Chip color={row.isActive ? "success" : "default"} label={row.isActive ? "Ativo" : "Inativo"} />
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Chip
+                        size="small"
+                        color={row.role === "OWNER" || row.role === "FINANCEIRO" || row.canViewFinancials ? "success" : "default"}
+                        label={row.role === "OWNER" || row.role === "FINANCEIRO" || row.canViewFinancials ? "Liberado" : "Restrito"}
+                      />
+                      {row.role === "GERENTE" && (
+                        <Button size="small" variant="text" onClick={() => setFinancialAccess(row.id, !row.canViewFinancials)}>
+                          {row.canViewFinancials ? "Bloquear" : "Liberar"}
+                        </Button>
+                      )}
+                    </Stack>
                   </TableCell>
                   <TableCell>{linkedEmployeeByUserId.get(row.id) ?? "Sem vinculo"}</TableCell>
                   <TableCell>{row.lastLoginAt ? formatDateTime(row.lastLoginAt) : "Nunca acessou"}</TableCell>
@@ -150,7 +190,7 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
                         >
                           {roleOptions.map((role) => (
                             <MenuItem key={role} value={role}>
-                              {role}
+                              {labelFor(role)}
                             </MenuItem>
                           ))}
                         </Select>

@@ -1,15 +1,17 @@
 import { employees, evaluations, leads, materials, quotes, serviceOrders } from "./demo-data";
 import { formatCurrency } from "./format";
 import { labelFor } from "./labels";
-import type { AttentionItem, ChartPoint, DashboardData, DashboardMetric, PerformanceScores, ServiceOrderStatus } from "./types";
+import { canViewServiceOrderFinancials } from "./permissions";
+import type { AttentionItem, ChartPoint, DashboardData, DashboardMetric, PerformanceScores, ServiceOrderStatus, SessionUser } from "./types";
 
-const today = new Date("2026-07-02T12:00:00");
 const activeOrderStatuses: ServiceOrderStatus[] = ["IN_PROGRESS", "PREPARING", "WAITING_CUSTOMER"];
 const finishedOrderStatuses: ServiceOrderStatus[] = ["DONE", "DELIVERED"];
 
 function isSameMonth(value: string) {
   const date = new Date(value);
-  return date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth();
+  if (!Number.isFinite(date.getTime())) return false;
+  const month = (input: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" }).format(input);
+  return month(date) === month(new Date());
 }
 
 function getAverage(values: number[]) {
@@ -129,6 +131,28 @@ function getMostExecutedServicesChart(sourceServiceOrders = serviceOrders): Char
     .slice(0, 6);
 }
 
+function sanitizeDashboardFinancials(data: DashboardData, user?: Pick<SessionUser, "role" | "canViewFinancials"> | null): DashboardData {
+  if (canViewServiceOrderFinancials(user)) return data;
+
+  return {
+    ...data,
+    metrics: data.metrics
+      .filter((metric) => !metric.label.includes("Receita"))
+      .map((metric) =>
+        metric.label.includes("Orcamentos")
+          ? { ...metric, trend: "Aguardando resposta comercial" }
+          : metric,
+      ),
+    attentionItems: data.attentionItems.map((item) =>
+      item.title.includes("Orcamentos")
+        ? { ...item, description: "Propostas aguardam retorno do cliente, sem exibicao de valores." }
+        : item,
+    ),
+    revenueByMonth: [],
+    financialOrders: data.financialOrders.map((order) => ({ ...order, revenue: 0, expenses: 0 })),
+  };
+}
+
 export function buildDashboardData(source?: {
   employees?: typeof employees;
   evaluations?: typeof evaluations;
@@ -136,7 +160,7 @@ export function buildDashboardData(source?: {
   materials?: typeof materials;
   quotes?: typeof quotes;
   serviceOrders?: typeof serviceOrders;
-}): DashboardData {
+}, user?: Pick<SessionUser, "role" | "canViewFinancials"> | null): DashboardData {
   const sourceEmployees = source?.employees ?? employees;
   const sourceEvaluations = source?.evaluations ?? evaluations;
   const sourceLeads = source?.leads ?? leads;
@@ -153,12 +177,12 @@ export function buildDashboardData(source?: {
   const lowMaterials = sourceMaterials.filter((material) => material.currentStock <= material.minStock);
   const overdueOrders = sourceServiceOrders.filter(
     (order) =>
-      !["DONE", "DELIVERED", "CANCELED"].includes(order.status) && new Date(order.scheduledEnd).getTime() < today.getTime(),
+      !["DONE", "DELIVERED", "CANCELED"].includes(order.status) && new Date(order.scheduledEnd).getTime() < Date.now(),
   );
   const staleEmployees = activeEmployees.filter((employee) => {
     if (employee.needsTraining) return true;
     if (!employee.lastEvaluationAt) return true;
-    const daysWithoutEvaluation = (today.getTime() - new Date(employee.lastEvaluationAt).getTime()) / 86_400_000;
+    const daysWithoutEvaluation = (Date.now() - new Date(employee.lastEvaluationAt).getTime()) / 86_400_000;
     return daysWithoutEvaluation > 35;
   });
   const monthlyRevenue = sourceServiceOrders
@@ -255,7 +279,7 @@ export function buildDashboardData(source?: {
     },
   ];
 
-  return {
+  return sanitizeDashboardFinancials({
     metrics,
     attentionItems,
     revenueByMonth: getRevenueByMonthChart(sourceServiceOrders),
@@ -275,5 +299,5 @@ export function buildDashboardData(source?: {
       .sort((a, b) => b.averageRating - a.averageRating)
       .slice(0, 4),
     sourceLabel: "Indicadores calculados da base operacional",
-  };
+  }, user);
 }

@@ -1,13 +1,10 @@
-import { notFound } from "next/navigation";
+import { ServiceOrderDetailLoader } from "@/components/ServiceOrderDetailLoader";
 
-import { ServiceOrderDetailView } from "@/components/ServiceOrderDetailView";
-import { getAuthorizedServiceOrderDetailData } from "@/lib/service-order-page-data";
+export const dynamic = "force-dynamic";
 
 export default async function ServiceOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const data = await getAuthorizedServiceOrderDetailData(id);
-  if (!data) notFound();
-  return <ServiceOrderDetailView {...data} />;
+  return <ServiceOrderDetailLoader orderId={id} />;
 }
 
 

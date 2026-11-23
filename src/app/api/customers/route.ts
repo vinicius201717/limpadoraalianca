@@ -1,6 +1,9 @@
-import { collectionHandlers } from "@/lib/api-handlers";
+import { withDatabase } from "@/lib/with-database";
+import { commercialCollection } from "@/lib/commercial-handlers";
 
-const handlers = collectionHandlers("customers", "customers");
+const handlers = commercialCollection("clientes");
+const GETHandler = handlers.GET;
+const POSTHandler = handlers.POST;
 
-export const GET = handlers.GET;
-export const POST = handlers.POST;
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);

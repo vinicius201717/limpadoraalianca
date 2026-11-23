@@ -1,6 +1,3 @@
-import { ModuleScreen } from "@/components/ModuleScreen";
-import { getModuleConfig } from "@/lib/module-config";
-
-export default function WarrantiesPage() {
-  return <ModuleScreen config={getModuleConfig("garantias")} />;
-}
+import { CommercialPage } from "@/components/CommercialPage";
+export const dynamic = "force-dynamic";
+export default function Page() { return <CommercialPage module="garantias" />; }

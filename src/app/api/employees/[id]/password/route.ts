@@ -1,21 +1,23 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { newPasswordSchema } from "@/lib/password-policy";
 
 import { requireApiUser } from "@/lib/api-handlers";
-import { changeEmployeeAccessPassword, toPublicUser } from "@/lib/store";
+import { changeEmployeeAccessPassword, flushDatabasePersistence, toPublicUser } from "@/lib/store";
 
 const passwordSchema = z.object({
   currentPassword: z.string().min(6).optional(),
-  newPassword: z.string().min(6),
+  newPassword: newPasswordSchema,
 });
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function PATCHHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
   const parsed = passwordSchema.safeParse(await request.json());
   if (!parsed.success) {
-    return NextResponse.json({ message: "Senha invalida. Use no minimo 6 caracteres.", issues: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ message: "Senha invalida. Use uma senha exclusiva de 10 a 72 caracteres.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
   const { id } = await context.params;
@@ -32,8 +34,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   }
   if (!result.user) return NextResponse.json({ message: "Nao foi possivel alterar a senha." }, { status: 400 });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({
     message: "Senha atualizada com sucesso.",
     user: toPublicUser(result.user),
   });
 }
+
+export const PATCH = withDatabase(PATCHHandler);

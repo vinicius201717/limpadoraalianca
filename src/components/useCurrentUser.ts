@@ -28,5 +28,15 @@ export function useCurrentUser() {
     };
   }, []);
 
+  useEffect(() => {
+    function handleUserUpdated(event: Event) {
+      const customEvent = event as CustomEvent<{ user?: SessionUser }>;
+      if (customEvent.detail?.user) setUser(customEvent.detail.user);
+    }
+
+    window.addEventListener("alianca:user-updated", handleUserUpdated);
+    return () => window.removeEventListener("alianca:user-updated", handleUserUpdated);
+  }, []);
+
   return { user, loading };
 }

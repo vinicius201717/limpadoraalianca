@@ -106,60 +106,16 @@ export function WarehouseServiceView({
     setError("");
     setNotice("");
     setBusyKey(request.id);
-    const items = materialRequestItems.filter((item) => item.requestId === request.id);
-    const createdItems: ServiceOrderMaterial[] = [];
-
-    for (const requestItem of items) {
-      const postResponse = await fetch(`/api/service-orders/${order.id}/materials`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          materialId: requestItem.materialId,
-          plannedQuantity: requestItem.quantity,
-          notes: requestItem.notes,
-        }),
-      });
-      const postData = await postResponse.json().catch(() => null);
-      if (!postResponse.ok) {
-        setBusyKey("");
-        setError(postData?.message ?? "Nao foi possivel criar o item solicitado.");
-        return;
-      }
-
-      const patchResponse = await fetch(`/api/service-orders/${order.id}/materials`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: postData.material.id,
-          status: "RESERVED",
-          separatedQuantity: requestItem.quantity,
-        }),
-      });
-      const patchData = await patchResponse.json().catch(() => null);
-      if (!patchResponse.ok) {
-        setBusyKey("");
-        setError(patchData?.message ?? "Nao foi possivel reservar o item solicitado.");
-        return;
-      }
-      createdItems.push(patchData.material);
-      updateStockMaterial(patchData.stockMaterial);
-    }
-
-    const requestResponse = await fetch(`/api/service-orders/${order.id}/material-requests`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: request.id, status: "SEPARATED" }),
-    });
-    const requestData = await requestResponse.json().catch(() => null);
-    setBusyKey("");
-    if (!requestResponse.ok) {
-      setError(requestData?.message ?? "Itens reservados, mas nao foi possivel atualizar a solicitacao.");
-      return;
-    }
-
-    setLocalOrderMaterials((current) => [...createdItems, ...current]);
-    setLocalRequests((current) => current.map((item) => (item.id === request.id ? requestData.request : item)));
-    setNotice("Solicitacao reservada e marcada como separada.");
+    try {
+      const response = await fetch(`/api/service-orders/${order.id}/material-requests`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: request.id, status: "SEPARATED" }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "Não foi possível reservar a solicitação.");
+      for (const material of data.materials) updateStockMaterial(material);
+      for (const allocation of data.allocations) updateOrderMaterial(allocation);
+      setLocalRequests((current) => current.map((item) => item.id === request.id ? data.request : item));
+      setNotice("Solicitação reservada e marcada como separada.");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha de comunicação."); }
+    finally { setBusyKey(""); }
   }
 
   async function patchEquipment(item: ServiceOrderEquipment, status: ServiceOrderEquipment["status"]) {

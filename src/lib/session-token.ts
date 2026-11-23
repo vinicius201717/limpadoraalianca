@@ -11,8 +11,12 @@ const sessionPayloadSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   email: z.string().email(),
+  phone: z.string().optional(),
   role: z.enum(["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO", "COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"]),
   isActive: z.boolean(),
+  canViewFinancials: z.boolean().optional(),
+  mustChangePassword: z.boolean().optional(),
+  sessionVersion: z.number().int().nonnegative().default(0),
 });
 
 function getJwtSecret() {
@@ -25,11 +29,15 @@ export function signSessionToken(user: SessionUser) {
       id: user.id,
       name: user.name,
       email: user.email,
+      phone: user.phone,
       role: user.role,
       isActive: user.isActive,
+      canViewFinancials: user.canViewFinancials,
+      sessionVersion: user.sessionVersion ?? 0,
+      mustChangePassword: user.mustChangePassword,
     },
     getJwtSecret(),
-    { expiresIn: SESSION_MAX_AGE_SECONDS },
+    { expiresIn: SESSION_MAX_AGE_SECONDS, algorithm: "HS256", issuer: "alianca", audience: "alianca-web" },
   );
 }
 
@@ -37,7 +45,7 @@ export function verifySessionPayload(token?: string): SessionUser | null {
   if (!token) return null;
 
   try {
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"], issuer: "alianca", audience: "alianca-web", maxAge: SESSION_MAX_AGE_SECONDS });
     const parsed = sessionPayloadSchema.safeParse(decoded);
     if (!parsed.success || parsed.data.isActive === false) return null;
     return parsed.data;

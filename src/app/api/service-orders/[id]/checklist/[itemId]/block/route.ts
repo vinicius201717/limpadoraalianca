@@ -1,14 +1,15 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { canManageChecklistForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canOperateChecklist } from "@/lib/permissions";
-import { blockChecklistItem, getChecklistForServiceOrder } from "@/lib/store";
+import { blockChecklistItem, flushDatabasePersistence, getChecklistForServiceOrder } from "@/lib/store";
 
 const blockSchema = z.object({ reason: z.string().min(3) });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id, itemId } = await context.params;
@@ -20,5 +21,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const parsed = blockSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ message: "Motivo obrigatorio.", issues: parsed.error.flatten() }, { status: 400 });
   const result = blockChecklistItem(id, itemId, parsed.data.reason, auth.user);
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

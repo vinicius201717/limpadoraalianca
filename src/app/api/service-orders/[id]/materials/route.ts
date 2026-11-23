@@ -1,34 +1,42 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
-import { canAccessAllServiceOrders, canPrepareServiceMaterials } from "@/lib/permissions";
+import { canAccessAllServiceOrders, canPrepareServiceMaterials, canRequestServiceMaterials } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
-import { db, recordAuditLog, updateServiceOrderMaterial } from "@/lib/store";
-import { getMaterialOperationalStatus, normalizeStockStatus } from "@/lib/stock-status";
-import type { ServiceOrderMaterial } from "@/lib/types";
+import { canUserAccessOrder, db, flushDatabasePersistence, recordAuditLog } from "@/lib/store";
+import { getMaterialOperationalStatus } from "@/lib/stock-status";
+import { applyMaterialMovement, InventoryError, isArchivedStockItem } from "@/lib/inventory-operations";
+import { randomUUID } from "node:crypto";
+import type { ServiceOrderMaterial, SessionUser } from "@/lib/types";
 
 const materialSchema = z.object({
   materialId: z.string(),
-  plannedQuantity: z.coerce.number().min(0),
+  plannedQuantity: z.coerce.number().positive(),
   notes: z.string().optional().default(""),
 });
 
 const materialPatchSchema = z.object({
   id: z.string(),
+  plannedQuantity: z.coerce.number().min(0).optional(),
   status: z
     .enum(["PENDING_SEPARATION", "SEPARATING", "RESERVED", "SEPARATED", "DELIVERED_TO_TEAM", "PARTIALLY_RETURNED", "RETURNED", "CONSUMED", "DAMAGED", "LOST", "CANCELED"])
     .optional(),
-  separatedQuantity: z.coerce.number().optional(),
-  deliveredQuantity: z.coerce.number().optional(),
-  returnedQuantity: z.coerce.number().optional(),
-  consumedQuantity: z.coerce.number().optional(),
-  damagedQuantity: z.coerce.number().optional(),
-  lostQuantity: z.coerce.number().optional(),
+  separatedQuantity: z.coerce.number().nonnegative().optional(),
+  deliveredQuantity: z.coerce.number().nonnegative().optional(),
+  returnedQuantity: z.coerce.number().nonnegative().optional(),
+  consumedQuantity: z.coerce.number().nonnegative().optional(),
+  damagedQuantity: z.coerce.number().nonnegative().optional(),
+  lostQuantity: z.coerce.number().nonnegative().optional(),
   notes: z.string().optional(),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+function canManageOrderMaterial(user: SessionUser, order: (typeof db.serviceOrders)[number]) {
+  return canAccessAllServiceOrders(user.role) || canPrepareServiceMaterials(user.role) || (canRequestServiceMaterials(user.role) && canUserAccessOrder(user, order));
+}
+
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -48,13 +56,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   return NextResponse.json({ materials });
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
-
-  if (!canAccessAllServiceOrders(auth.user.role) && !canPrepareServiceMaterials(auth.user.role)) {
-    return NextResponse.json({ message: "Perfil sem permissao para definir materiais da OS." }, { status: 403 });
-  }
 
   const parsed = materialSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -64,9 +68,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const { id } = await context.params;
   const order = db.serviceOrders.find((item) => item.id === id);
   if (!order) return NextResponse.json({ message: "OS nao encontrada." }, { status: 404 });
+  if (!canManageOrderMaterial(auth.user, order)) {
+    return NextResponse.json({ message: "Perfil sem permissao para definir materiais da OS." }, { status: 403 });
+  }
+
+  if (["DONE", "DELIVERED", "CANCELED"].includes(order.status)) return NextResponse.json({ message: "OS encerrada nao recebe novos materiais." }, { status: 409 });
+  const stock = db.materials.find((item) => item.id === parsed.data.materialId);
+  if (!stock || isArchivedStockItem(stock)) return NextResponse.json({ message: "Material ativo nao encontrado." }, { status: 404 });
 
   const material: ServiceOrderMaterial = {
-    id: `som-${Date.now()}`,
+    id: `som-${randomUUID()}`,
     serviceOrderId: id,
     materialId: parsed.data.materialId,
     plannedQuantity: parsed.data.plannedQuantity,
@@ -90,16 +101,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     newValueJson: material,
   });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({ material }, { status: 201 });
 }
 
-export async function PATCH(request: NextRequest) {
+async function PATCHHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
-
-  if (!canPrepareServiceMaterials(auth.user.role)) {
-    return NextResponse.json({ message: "Perfil sem permissao para preparar materiais." }, { status: 403 });
-  }
 
   const parsed = materialPatchSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -108,41 +117,43 @@ export async function PATCH(request: NextRequest) {
 
   const serviceMaterial = db.serviceOrderMaterials.find((item) => item.id === parsed.data.id);
   if (!serviceMaterial) return NextResponse.json({ message: "Material da OS nao encontrado." }, { status: 404 });
+  const { id } = await context.params;
+  const order = db.serviceOrders.find((item) => item.id === id && item.id === serviceMaterial.serviceOrderId);
+  if (!order) return NextResponse.json({ message: "OS nao encontrada." }, { status: 404 });
+  if (!canManageOrderMaterial(auth.user, order)) {
+    return NextResponse.json({ message: "Perfil sem permissao para atualizar materiais desta OS." }, { status: 403 });
+  }
+
+  const canPrepare = canPrepareServiceMaterials(auth.user.role);
+  if (!canPrepare && parsed.data.status && !["PENDING_SEPARATION", "CANCELED"].includes(parsed.data.status)) {
+    return NextResponse.json({ message: "Supervisor pode ajustar planejamento ou remover material, mas reserva/entrega fica com o almoxarifado." }, { status: 403 });
+  }
+  if (!canPrepare && ["separatedQuantity", "deliveredQuantity", "returnedQuantity", "consumedQuantity", "damagedQuantity", "lostQuantity"].some((key) => key in parsed.data)) {
+    return NextResponse.json({ message: "Quantidades operacionais sao conferidas pelo almoxarifado." }, { status: 403 });
+  }
 
   const materialStock = db.materials.find((item) => item.id === serviceMaterial.materialId);
-  const nextStatus = parsed.data.status;
-  const nextSeparatedQuantity =
-    parsed.data.separatedQuantity ?? (nextStatus === "RESERVED" || nextStatus === "SEPARATED" ? serviceMaterial.plannedQuantity : serviceMaterial.separatedQuantity);
-  const shouldReserveStock = nextStatus === "RESERVED" || nextStatus === "SEPARATED";
-
-  if (shouldReserveStock) {
-    if (!materialStock) return NextResponse.json({ message: "Material de estoque nao encontrado." }, { status: 404 });
-    const stockStatus = normalizeStockStatus(materialStock.status);
-    if (stockStatus === "IN_MAINTENANCE" || stockStatus === "DAMAGED" || stockStatus === "UNAVAILABLE") {
-      return NextResponse.json({ message: "Material indisponivel para reserva no estoque." }, { status: 400 });
-    }
-    const reservationDelta = Math.max(0, nextSeparatedQuantity - serviceMaterial.separatedQuantity);
-    if (reservationDelta > materialStock.currentStock) {
-      return NextResponse.json({ message: "Estoque insuficiente para reservar esta quantidade." }, { status: 400 });
-    }
-    materialStock.currentStock -= reservationDelta;
-    materialStock.status = getMaterialOperationalStatus(materialStock);
+  if (!materialStock) return NextResponse.json({ message: "Material de estoque nao encontrado." }, { status: 404 });
+  const oldValueJson = { material: { ...serviceMaterial }, stock: { ...materialStock } };
+  let material;
+  try {
+    const { id: allocationId, ...patch } = parsed.data;
+    void allocationId;
+    material = applyMaterialMovement(materialStock, serviceMaterial, patch, auth.user.id);
+  } catch (error) {
+    if (error instanceof InventoryError) return NextResponse.json({ message: error.message }, { status: 409 });
+    throw error;
   }
+  recordAuditLog({ userId: auth.user.id, action: "MATERIAL_STOCK_MOVEMENT", entity: "ServiceOrderMaterial", entityId: material.id, oldValueJson, newValueJson: { material, stock: materialStock } });
 
-  const patchData: Partial<ServiceOrderMaterial> = {
-    ...parsed.data,
-    separatedQuantity: nextSeparatedQuantity,
-    preparedByUserId: shouldReserveStock ? auth.user.id : serviceMaterial.preparedByUserId,
-  };
-  if (nextStatus === "DELIVERED_TO_TEAM") {
-    patchData.deliveredQuantity = parsed.data.deliveredQuantity ?? Math.max(serviceMaterial.deliveredQuantity, serviceMaterial.separatedQuantity);
-    patchData.deliveredByUserId = auth.user.id;
-  }
-
-  const material = updateServiceOrderMaterial(parsed.data.id, patchData, auth.user);
+  await flushDatabasePersistence();
 
   return NextResponse.json({
     material,
     stockMaterial: materialStock ? { ...materialStock, status: getMaterialOperationalStatus(materialStock) } : undefined,
   });
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);
+export const PATCH = withDatabase(PATCHHandler);

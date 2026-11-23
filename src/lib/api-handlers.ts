@@ -18,7 +18,14 @@ import {
   canViewLeads,
   canViewQuotes,
 } from "./permissions";
-import { createResource, db, deleteResource, updateResource } from "./store";
+import {
+  createResource,
+  db,
+  deleteResource,
+  ensureDatabaseReady,
+  flushDatabasePersistence,
+  updateResource,
+} from "./store";
 import type { SessionUser } from "./types";
 
 type ResourceKey = Exclude<keyof typeof db, "dashboardMetrics">;
@@ -29,6 +36,7 @@ export async function requireApiUser(request: NextRequest) {
     return { user: null, response: NextResponse.json({ message: "Nao autenticado." }, { status: 401 }) };
   }
 
+  if (user.mustChangePassword && !["/api/auth/me", "/api/auth/password", "/api/auth/logout", "/api/auth/profile-photo"].includes(request.nextUrl.pathname)) return { user: null, response: NextResponse.json({ message: "Altere sua senha em Configurações antes de continuar.", code: "PASSWORD_CHANGE_REQUIRED" }, { status: 403 }) };
   return { user, response: null };
 }
 
@@ -37,6 +45,7 @@ export function collectionHandlers(resource: ResourceKey, responseKey: string) {
     async GET(request: NextRequest) {
       const auth = await requireApiUser(request);
       if (auth.response) return auth.response;
+      await ensureDatabaseReady();
       const forbidden = ensureResourcePermission(auth.user, resource, "read");
       if (forbidden) return forbidden;
       return NextResponse.json({ [responseKey]: db[resource] });
@@ -45,10 +54,12 @@ export function collectionHandlers(resource: ResourceKey, responseKey: string) {
     async POST(request: NextRequest) {
       const auth = await requireApiUser(request);
       if (auth.response) return auth.response;
+      await ensureDatabaseReady();
       const forbidden = ensureResourcePermission(auth.user, resource, "write");
       if (forbidden) return forbidden;
       const body = await request.json();
       const record = createResource(resource, body);
+      await flushDatabasePersistence();
       return NextResponse.json({ [responseKey.slice(0, -1) || "record"]: record }, { status: 201 });
     },
   };
@@ -59,6 +70,7 @@ export function itemHandlers(resource: ResourceKey, responseKey: string) {
     async GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
       const auth = await requireApiUser(request);
       if (auth.response) return auth.response;
+      await ensureDatabaseReady();
       const forbidden = ensureResourcePermission(auth.user, resource, "read");
       if (forbidden) return forbidden;
       const { id } = await context.params;
@@ -70,22 +82,26 @@ export function itemHandlers(resource: ResourceKey, responseKey: string) {
     async PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
       const auth = await requireApiUser(request);
       if (auth.response) return auth.response;
+      await ensureDatabaseReady();
       const forbidden = ensureResourcePermission(auth.user, resource, "write");
       if (forbidden) return forbidden;
       const { id } = await context.params;
       const record = updateResource(resource, id, await request.json());
       if (!record) return NextResponse.json({ message: "Registro nao encontrado." }, { status: 404 });
+      await flushDatabasePersistence();
       return NextResponse.json({ [responseKey]: record });
     },
 
     async DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
       const auth = await requireApiUser(request);
       if (auth.response) return auth.response;
+      await ensureDatabaseReady();
       const forbidden = ensureResourcePermission(auth.user, resource, "write");
       if (forbidden) return forbidden;
       const { id } = await context.params;
       const deleted = deleteResource(resource, id);
       if (!deleted) return NextResponse.json({ message: "Registro nao encontrado." }, { status: 404 });
+      await flushDatabasePersistence();
       return NextResponse.json({ ok: true });
     },
   };

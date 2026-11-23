@@ -1,6 +1,3 @@
-import { NewRecordView } from "@/components/NewRecordView";
-import { getModuleConfig } from "@/lib/module-config";
-
-export default function NewLeadPage() {
-  return <NewRecordView config={getModuleConfig("leads")} />;
-}
+import { CommercialPage } from "@/components/CommercialPage";
+export const dynamic = "force-dynamic";
+export default function Page() { return <CommercialPage module="leads" id="novo" />; }

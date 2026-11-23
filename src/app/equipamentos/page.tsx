@@ -1,9 +1,16 @@
+import { getOperationalPageData } from "@/lib/operational-page-data";
 import { EquipmentStockView } from "@/components/EquipmentStockView";
-import { db, ensureDatabaseReady } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default async function EquipmentPage() {
-  await ensureDatabaseReady();
-  return <EquipmentStockView initialEquipment={db.equipment} />;
+  const { data } = await getOperationalPageData({ stock: true });
+  return (
+    <EquipmentStockView
+      employees={data.employees}
+      initialEquipment={data.equipment}
+      serviceOrderEquipment={data.serviceOrderEquipment}
+      serviceOrders={data.serviceOrders}
+    />
+  );
 }

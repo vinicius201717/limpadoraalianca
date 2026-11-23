@@ -1,6 +1,7 @@
 import { ScheduleView } from "@/components/ScheduleView";
+import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { db, ensureDatabaseReady, getAccessibleServiceOrders } from "@/lib/store";
+import { db, ensureDatabaseReady, getAccessibleServiceOrders, getLinkedEmployeeId } from "@/lib/store";
 import type { ScheduleEvent, ServiceOrder, ServiceOrderStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -28,9 +29,9 @@ function serviceOrderEvent(order: ServiceOrder): ScheduleEvent {
   };
 }
 
-function buildScheduleEvents(serviceOrders: ServiceOrder[], includeInspections: boolean) {
+function buildScheduleEvents(serviceOrders: ServiceOrder[], includeInspections: boolean, userId: string, employeeId?: string) {
   const visibleOrderIds = new Set(serviceOrders.map((order) => order.id));
-  const savedEvents = db.scheduleEvents.filter((event) => !event.serviceOrderId || visibleOrderIds.has(event.serviceOrderId));
+  const savedEvents = db.scheduleEvents.filter((event) => event.serviceOrderId ? visibleOrderIds.has(event.serviceOrderId) : includeInspections || event.assignedUserId === userId || Boolean(employeeId && event.assignedEmployeeId === employeeId));
   const savedServiceEventOrderIds = new Set(
     savedEvents.filter((event) => event.type === "SERVICE_ORDER" && event.serviceOrderId).map((event) => event.serviceOrderId),
   );
@@ -102,15 +103,18 @@ function buildScheduleEvents(serviceOrders: ServiceOrder[], includeInspections: 
 export default async function AgendaPage() {
   await ensureDatabaseReady();
   const user = await getCurrentUser();
-  const serviceOrders = user ? getAccessibleServiceOrders(user) : [];
+  if (!user) redirect("/login");
+  const serviceOrders = getAccessibleServiceOrders(user);
+  const orderIds = new Set(serviceOrders.map((order) => order.id));
+  const teamIds = new Set(serviceOrders.flatMap((order) => [...order.employeeIds, order.supervisorEmployeeId]));
   const includeInspections = Boolean(user && ["OWNER", "GERENTE", "COMERCIAL", "TECNICO"].includes(user.role));
 
   return (
     <ScheduleView
-      employees={db.employees}
-      scheduleEvents={buildScheduleEvents(serviceOrders, includeInspections)}
-      serviceOrderChecklistItems={db.serviceOrderChecklistItems}
-      serviceOrderMaterials={db.serviceOrderMaterials}
+      employees={db.employees.filter((employee) => teamIds.has(employee.id)).map((employee) => ({ ...employee, document: "", email: "", phone: "", dailyCost: 0, notes: "" }))}
+      scheduleEvents={buildScheduleEvents(serviceOrders, includeInspections, user.id, getLinkedEmployeeId(user))}
+      serviceOrderChecklistItems={db.serviceOrderChecklistItems.filter((item) => orderIds.has(item.serviceOrderId))}
+      serviceOrderMaterials={db.serviceOrderMaterials.filter((item) => orderIds.has(item.serviceOrderId))}
       serviceOrders={serviceOrders}
       referenceTime={new Date().toISOString()}
     />

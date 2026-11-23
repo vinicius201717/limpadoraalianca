@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canEditEmployee } from "@/lib/permissions";
-import { db, recordAuditLog } from "@/lib/store";
+import { db, flushDatabasePersistence, recordAuditLog } from "@/lib/store";
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   if (!canEditEmployee(auth.user.role)) {
@@ -24,6 +25,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     oldValueJson,
     newValueJson: { status: employee.status },
   });
+  await flushDatabasePersistence();
 
   return NextResponse.json({ message: "Colaborador ativado com sucesso.", employee });
 }
+
+export const POST = withDatabase(POSTHandler);

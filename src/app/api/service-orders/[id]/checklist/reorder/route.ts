@@ -1,16 +1,17 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { canManageChecklistForOrder } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canEditChecklist } from "@/lib/permissions";
-import { db, getChecklistForServiceOrder, reorderChecklistItems } from "@/lib/store";
+import { db, flushDatabasePersistence, getChecklistForServiceOrder, reorderChecklistItems } from "@/lib/store";
 
 const reorderSchema = z.object({
   itemIds: z.array(z.string()).min(1),
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -26,5 +27,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
   const result = reorderChecklistItems(id, parsed.data.itemIds, auth.user);
   if (result.error === "INVALID_ITEMS") return NextResponse.json({ message: "Lista contem item invalido para esta OS." }, { status: 400 });
+  await flushDatabasePersistence();
   return NextResponse.json({ items: result.items, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

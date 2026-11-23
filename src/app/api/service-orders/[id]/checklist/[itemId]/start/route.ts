@@ -1,11 +1,12 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { canOperateChecklistItemForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canOperateChecklist } from "@/lib/permissions";
-import { getChecklistForServiceOrder, startChecklistItem } from "@/lib/store";
+import { flushDatabasePersistence, getChecklistForServiceOrder, startChecklistItem } from "@/lib/store";
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id, itemId } = await context.params;
@@ -20,5 +21,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (result.error === "ITEM_ALREADY_STARTED") return NextResponse.json({ message: "Item ja iniciado por outro usuario." }, { status: 409 });
   if (result.error === "INVALID_STATUS") return NextResponse.json({ message: "Item nao esta disponivel para iniciar." }, { status: 409 });
   if (result.error === "FORBIDDEN") return NextResponse.json({ message: "Colaborador so pode iniciar tarefa propria habilitada." }, { status: 403 });
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

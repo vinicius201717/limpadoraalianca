@@ -1,19 +1,22 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canCreateManager, canManageUsers } from "@/lib/permissions";
-import { db, toPublicUser, updateSystemUser } from "@/lib/store";
+import { db, flushDatabasePersistence, toPublicUser, updateSystemUser } from "@/lib/store";
 
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
-  email: z.string().email().optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  phone: z.string().min(8).optional().or(z.literal("")),
   role: z.enum(["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO", "COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"]).optional(),
   isActive: z.boolean().optional(),
   linkedEmployeeId: z.string().optional(),
+  canViewFinancials: z.boolean().optional(),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -27,7 +30,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   return NextResponse.json({ user: toPublicUser(user) });
 }
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function PATCHHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -48,6 +51,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   const result = updateSystemUser(id, parsed.data, auth.user);
   if (result.error === "NOT_FOUND") return NextResponse.json({ message: "Usuario nao encontrado." }, { status: 404 });
   if (result.error === "EMAIL_EXISTS") return NextResponse.json({ message: "E-mail ja cadastrado." }, { status: 409 });
+  if (result.error === "PHONE_EXISTS") return NextResponse.json({ message: "Telefone ja cadastrado." }, { status: 409 });
   if (result.error === "SELF_ROLE_CHANGE") {
     return NextResponse.json({ message: "Voce nao pode alterar a propria role." }, { status: 403 });
   }
@@ -62,5 +66,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   }
   if (!result.user) return NextResponse.json({ message: "Nao foi possivel editar usuario." }, { status: 400 });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({ message: "Usuario atualizado com sucesso.", user: toPublicUser(result.user) });
 }
+
+export const GET = withDatabase(GETHandler);
+export const PATCH = withDatabase(PATCHHandler);

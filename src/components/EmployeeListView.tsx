@@ -13,43 +13,57 @@ import {
   Paper,
   Select,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
+import FormatListBulletedRoundedIcon from "@mui/icons-material/FormatListBulletedRounded";
 import LockOpenRoundedIcon from "@mui/icons-material/LockOpenRounded";
 import SchoolRoundedIcon from "@mui/icons-material/SchoolRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
+import ViewModuleRoundedIcon from "@mui/icons-material/ViewModuleRounded";
 import WorkspacePremiumRoundedIcon from "@mui/icons-material/WorkspacePremiumRounded";
 
 import { formatDate, normalizeText } from "@/lib/format";
 import { labelFor } from "@/lib/labels";
-import { canCreateEmployee, canPromoteEmployeeToSupervisor, canPromoteSupervisorToManager } from "@/lib/permissions";
-import type { Employee, SessionUser } from "@/lib/types";
+import { canCreateEmployee, canEditEmployee, canPromoteEmployeeToSupervisor, canPromoteSupervisorToManager } from "@/lib/permissions";
+import type { Employee, EmployeeStatus, SessionUser } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
 import { useCurrentUser } from "./useCurrentUser";
 
-const statusOptions = ["ACTIVE", "ON_LEAVE", "INACTIVE", "FIRED"];
+const statusOptions: EmployeeStatus[] = ["ACTIVE", "VACATION", "ON_LEAVE", "SUSPENDED", "INACTIVE", "FIRED"];
 
 export function EmployeeListView({ employees, users }: { employees: Employee[]; users: SessionUser[] }) {
   const { user, loading } = useCurrentUser();
+  const [localEmployees, setLocalEmployees] = useState(employees);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
   const [promotedIds, setPromotedIds] = useState<string[]>([]);
   const [managerRoleIds, setManagerRoleIds] = useState<string[]>([]);
   const [collaboratorRoleIds, setCollaboratorRoleIds] = useState<string[]>([]);
   const [accessIds, setAccessIds] = useState<string[]>([]);
+  const [statusBusyId, setStatusBusyId] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const canCreate = canCreateEmployee(user?.role ?? "COLABORADOR");
+  const canEdit = canEditEmployee(user?.role ?? "COLABORADOR");
   const canPromote = canPromoteEmployeeToSupervisor(user?.role ?? "COLABORADOR");
   const canPromoteManager = canPromoteSupervisorToManager(user?.role ?? "COLABORADOR");
 
-  const activeEmployees = employees.filter((employee) => employee.status === "ACTIVE");
-  const topEmployees = employees.filter((employee) => employee.averageRating >= 4.8);
-  const trainingEmployees = employees.filter((employee) => {
+  const activeEmployees = localEmployees.filter((employee) => employee.status === "ACTIVE");
+  const topEmployees = localEmployees.filter((employee) => employee.averageRating >= 4.8);
+  const trainingEmployees = localEmployees.filter((employee) => {
     const hasEvaluationSignal = employee.averageRating > 0 || Boolean(employee.lastEvaluationAt) || employee.serviceOrdersCount > 0;
     return Boolean(employee.needsTraining || (hasEvaluationSignal && employee.averageRating < 3.8));
   });
@@ -59,7 +73,7 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
   const filteredEmployees = useMemo(() => {
     const normalizedQuery = normalizeText(query);
 
-    return employees.filter((employee) => {
+    return localEmployees.filter((employee) => {
       const matchesQuery =
         !normalizedQuery ||
         [employee.name, employee.roleName, employee.specialty, employee.status, employee.lastJob].some((value) =>
@@ -68,7 +82,7 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
       const matchesStatus = !status || employee.status === status;
       return matchesQuery && matchesStatus;
     });
-  }, [employees, query, status]);
+  }, [localEmployees, query, status]);
 
   async function promoteToSupervisor(employeeId: string) {
     setNotice("");
@@ -126,17 +140,17 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
     setNotice(data?.message ?? "Supervisor promovido a gerente.");
   }
 
-  async function grantAccess(employeeId: string, email: string) {
+  async function grantAccess(employeeId: string, phone: string) {
     setNotice("");
     setError("");
-    if (!email) {
-      setError("Informe e-mail do colaborador antes de criar acesso.");
+    if (!phone) {
+      setError("Informe telefone do colaborador antes de criar acesso.");
       return;
     }
     const response = await fetch(`/api/employees/${employeeId}/grant-access`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, role: "COLABORADOR", temporaryPassword: "123456" }),
+      body: JSON.stringify({ phone, role: "COLABORADOR", temporaryPassword: "alianca2026" }),
     });
     const data = await response.json().catch(() => null);
     if (response.status === 403) {
@@ -149,6 +163,32 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
     }
     setAccessIds((current) => [...current, employeeId]);
     setNotice(data?.message ?? "Acesso criado com sucesso.");
+  }
+
+  async function updateEmployeeStatus(employeeId: string, nextStatus: EmployeeStatus) {
+    setNotice("");
+    setError("");
+    setStatusBusyId(employeeId);
+    const response = await fetch(`/api/employees/${employeeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    const data = await response.json().catch(() => null);
+    setStatusBusyId("");
+
+    if (response.status === 403) {
+      setError("Voce nao possui permissao para alterar status de colaboradores.");
+      return;
+    }
+    if (!response.ok) {
+      setError(data?.message ?? "Nao foi possivel atualizar o status.");
+      return;
+    }
+
+    const updatedEmployee = data.employee as Employee;
+    setLocalEmployees((current) => current.map((employee) => (employee.id === updatedEmployee.id ? updatedEmployee : employee)));
+    setNotice(`Status de ${updatedEmployee.name} atualizado para ${labelFor(updatedEmployee.status)}.`);
   }
 
   return (
@@ -210,6 +250,22 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
               </MenuItem>
             ))}
           </Select>
+          <ToggleButtonGroup
+            exclusive
+            value={viewMode}
+            onChange={(_, nextMode: "cards" | "list" | null) => {
+              if (nextMode) setViewMode(nextMode);
+            }}
+            size="small"
+            sx={{ alignSelf: { xs: "stretch", lg: "center" } }}
+          >
+            <ToggleButton value="cards" aria-label="Visualizacao em cards">
+              <ViewModuleRoundedIcon fontSize="small" />
+            </ToggleButton>
+            <ToggleButton value="list" aria-label="Visualizacao em lista">
+              <FormatListBulletedRoundedIcon fontSize="small" />
+            </ToggleButton>
+          </ToggleButtonGroup>
           <Chip label={`${filteredEmployees.length} colaboradores`} sx={{ alignSelf: { xs: "flex-start", lg: "center" } }} />
         </Stack>
       </Paper>
@@ -221,6 +277,65 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
             Ajuste a busca ou os filtros para ampliar o resultado.
           </Typography>
         </Paper>
+      ) : viewMode === "list" ? (
+        <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 900 }}>Colaborador</TableCell>
+                <TableCell sx={{ fontWeight: 900 }}>Funcao</TableCell>
+                <TableCell sx={{ fontWeight: 900 }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 900 }} align="right">Media</TableCell>
+                <TableCell sx={{ fontWeight: 900 }} align="right">Obras</TableCell>
+                <TableCell sx={{ fontWeight: 900 }}>Ultima avaliacao</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 900 }}>Acoes</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredEmployees.map((employee) => {
+                const accessUser = employee.userId ? users.find((currentUser) => currentUser.id === employee.userId) : undefined;
+                return (
+                  <TableRow key={employee.id} hover>
+                    <TableCell>
+                      <Stack direction="row" spacing={1.4} alignItems="center">
+                        <Avatar sx={{ width: 38, height: 38, bgcolor: employee.averageRating >= 4.8 ? "success.main" : employee.needsTraining ? "warning.main" : "primary.main" }}>
+                          {employee.name.slice(0, 1)}
+                        </Avatar>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography fontWeight={900} noWrap>{employee.name}</Typography>
+                          <Typography variant="body2" color="text.secondary" noWrap>{employee.phone || "Sem telefone"}</Typography>
+                        </Box>
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Typography fontWeight={850}>{employee.jobTitle ?? employee.roleName}</Typography>
+                      <Typography variant="body2" color="text.secondary">{employee.specialty}</Typography>
+                    </TableCell>
+                    <TableCell sx={{ minWidth: 190 }}>
+                      <EmployeeStatusSelect
+                        employee={employee}
+                        canEdit={canEdit}
+                        busy={statusBusyId === employee.id}
+                        onChange={updateEmployeeStatus}
+                      />
+                    </TableCell>
+                    <TableCell align="right">{employee.averageRating.toFixed(1)}</TableCell>
+                    <TableCell align="right">{employee.serviceOrdersCount}</TableCell>
+                    <TableCell>{employee.lastEvaluationAt ? formatDate(employee.lastEvaluationAt) : "Sem avaliacao"}</TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={1} justifyContent="flex-end">
+                        {accessUser && <Chip size="small" variant="outlined" label={labelFor(accessUser.role)} />}
+                        <Button component={Link} href={`/colaboradores/${employee.id}`} size="small" endIcon={<ArrowForwardRoundedIcon />}>
+                          Perfil
+                        </Button>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
       ) : (
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" }, gap: 2 }}>
           {filteredEmployees.map((employee) => {
@@ -289,11 +404,18 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
                     </Box>
                   )}
 
+                  <EmployeeStatusSelect
+                    employee={employee}
+                    canEdit={canEdit}
+                    busy={statusBusyId === employee.id}
+                    onChange={updateEmployeeStatus}
+                  />
+
                   <Button component={Link} href={`/colaboradores/${employee.id}`} variant="outlined" endIcon={<ArrowForwardRoundedIcon />}>
                     Abrir perfil
                   </Button>
                   {canPromote && !hasAccess && (
-                    <Button onClick={() => grantAccess(employee.id, employee.email)} variant="outlined" startIcon={<LockOpenRoundedIcon />}>
+                    <Button onClick={() => grantAccess(employee.id, employee.phone)} variant="outlined" startIcon={<LockOpenRoundedIcon />}>
                       Dar acesso
                     </Button>
                   )}
@@ -354,6 +476,37 @@ function SummaryCard({
         </Avatar>
       </Stack>
     </Paper>
+  );
+}
+
+function EmployeeStatusSelect({
+  employee,
+  canEdit,
+  busy,
+  onChange,
+}: {
+  employee: Employee;
+  canEdit: boolean;
+  busy: boolean;
+  onChange: (employeeId: string, status: EmployeeStatus) => void;
+}) {
+  return (
+    <TextField
+      select
+      size="small"
+      label="Status"
+      value={employee.status}
+      onChange={(event) => onChange(employee.id, event.target.value as EmployeeStatus)}
+      disabled={!canEdit || busy}
+      fullWidth
+      helperText={busy ? "Atualizando..." : canEdit ? "Altere disponibilidade do colaborador" : "Sem permissao"}
+    >
+      {statusOptions.map((option) => (
+        <MenuItem key={option} value={option}>
+          {labelFor(option)}
+        </MenuItem>
+      ))}
+    </TextField>
   );
 }
 

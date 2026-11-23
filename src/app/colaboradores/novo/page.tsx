@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { AccessDeniedView } from "@/components/AccessDeniedView";
 import { NewEmployeeView } from "@/components/NewEmployeeView";
 import { getCurrentUser } from "@/lib/auth";

@@ -1,7 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { Avatar, Box, Button, Chip, LinearProgress, Paper, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import {
+  Alert,
+  Avatar,
+  Box,
+  Button,
+  Chip,
+  Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  LinearProgress,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from "@mui/material";
 import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
 import AssignmentTurnedInRoundedIcon from "@mui/icons-material/AssignmentTurnedInRounded";
 import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
@@ -9,9 +32,10 @@ import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import LocalShippingRoundedIcon from "@mui/icons-material/LocalShippingRounded";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, normalizeText } from "@/lib/format";
 import { getMaterialOperationalStatus } from "@/lib/stock-status";
 import type {
+  Employee,
   Equipment,
   Material,
   ServiceMaterialRequest,
@@ -22,7 +46,18 @@ import type {
 } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
 
+const activeMaterialStatuses = new Set<ServiceOrderMaterial["status"]>([
+  "PENDING_SEPARATION",
+  "SEPARATING",
+  "RESERVED",
+  "SEPARATED",
+  "DELIVERED_TO_TEAM",
+  "PARTIALLY_RETURNED",
+]);
+const activeEquipmentStatuses = new Set<ServiceOrderEquipment["status"]>(["REQUESTED", "RESERVED", "DELIVERED", "IN_USE"]);
+
 export function WarehouseView({
+  employees,
   equipment,
   materialRequestItems,
   materialRequests,
@@ -31,6 +66,7 @@ export function WarehouseView({
   serviceOrderMaterials,
   serviceOrders,
 }: {
+  employees: Employee[];
   equipment: Equipment[];
   materialRequestItems: ServiceMaterialRequestItem[];
   materialRequests: ServiceMaterialRequest[];
@@ -39,6 +75,9 @@ export function WarehouseView({
   serviceOrderMaterials: ServiceOrderMaterial[];
   serviceOrders: ServiceOrder[];
 }) {
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [inventoryQuery, setInventoryQuery] = useState("");
+  const [selectedInventory, setSelectedInventory] = useState<{ type: "material" | "equipment"; id: string } | null>(null);
   const lowStock = materials.filter((material) => ["LOW_STOCK", "OUT_OF_STOCK"].includes(getMaterialOperationalStatus(material)));
   const pendingMaterials = serviceOrderMaterials.filter((item) => item.status === "PENDING_SEPARATION" || item.status === "SEPARATING");
   const reservedMaterials = serviceOrderMaterials.filter((item) => item.status === "RESERVED" || item.status === "SEPARATED");
@@ -54,6 +93,46 @@ export function WarehouseView({
       return hasMaterials || hasEquipment || hasRequests;
     })
     .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
+  const normalizedQuery = normalizeText(inventoryQuery.trim());
+  const materialUsageFor = (materialId: string) =>
+    serviceOrderMaterials
+      .filter((item) => item.materialId === materialId && activeMaterialStatuses.has(item.status))
+      .map((link) => {
+        const order = serviceOrders.find((item) => item.id === link.serviceOrderId);
+        return {
+          link,
+          order,
+          supervisor: order?.supervisorEmployeeId ? employees.find((employee) => employee.id === order.supervisorEmployeeId) : undefined,
+        };
+      });
+  const equipmentUsageFor = (equipmentId: string) =>
+    serviceOrderEquipment
+      .filter((item) => item.equipmentId === equipmentId && activeEquipmentStatuses.has(item.status))
+      .map((link) => {
+        const order = serviceOrders.find((item) => item.id === link.serviceOrderId);
+        return {
+          link,
+          order,
+          supervisor: order?.supervisorEmployeeId ? employees.find((employee) => employee.id === order.supervisorEmployeeId) : undefined,
+        };
+      });
+  const filteredMaterials = materials.filter((material) => {
+    if (!normalizedQuery) return true;
+    const usage = materialUsageFor(material.id);
+    return normalizeText([material.name, material.unit, usage.length ? "em uso" : "livre", ...usage.flatMap((item) => [item.order?.title, item.order?.customerName, item.supervisor?.name])].filter(Boolean).join(" ")).includes(normalizedQuery);
+  });
+  const filteredEquipment = equipment.filter((item) => {
+    if (!normalizedQuery) return true;
+    const usage = equipmentUsageFor(item.id);
+    return normalizeText([item.name, item.code, item.notes, item.status, usage.length ? "em uso" : "livre", ...usage.flatMap((usageItem) => [usageItem.order?.title, usageItem.order?.customerName, usageItem.supervisor?.name])].filter(Boolean).join(" ")).includes(normalizedQuery);
+  });
+  const selectedMaterial = selectedInventory?.type === "material" ? materials.find((item) => item.id === selectedInventory.id) : undefined;
+  const selectedEquipment = selectedInventory?.type === "equipment" ? equipment.find((item) => item.id === selectedInventory.id) : undefined;
+  const selectedUsage = selectedMaterial
+    ? materialUsageFor(selectedMaterial.id).map((item) => ({ ...item, kind: "material" as const }))
+    : selectedEquipment
+      ? equipmentUsageFor(selectedEquipment.id).map((item) => ({ ...item, kind: "equipment" as const }))
+      : [];
 
   return (
     <Stack spacing={3}>
@@ -66,17 +145,75 @@ export function WarehouseView({
             Fila de separacao por ordem de servico, com materiais solicitados, equipamentos a reservar e alertas de estoque.
           </Typography>
         </Box>
-        <Button component={Link} href="/almoxarifado/servicos" variant="contained" endIcon={<ArrowForwardRoundedIcon />}>
-          Servicos para preparar
-        </Button>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ width: { xs: "100%", md: "auto" } }}>
+          <Button variant="outlined" onClick={() => setSummaryOpen((current) => !current)} sx={{ width: { xs: "100%", sm: "auto" } }}>
+            {summaryOpen ? "Ocultar resumo" : "Mostrar resumo"}
+          </Button>
+          <Button component={Link} href="/almoxarifado/servicos" variant="contained" endIcon={<ArrowForwardRoundedIcon />} sx={{ width: { xs: "100%", sm: "auto" } }}>
+            Servicos para preparar
+          </Button>
+        </Stack>
       </Stack>
 
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" }, gap: 2 }}>
-        <WarehouseKpi label="Materiais a reservar" value={String(pendingMaterials.length)} icon={<Inventory2RoundedIcon />} tone="warning" />
-        <WarehouseKpi label="Equipamentos solicitados" value={String(requestedEquipment.length)} icon={<BuildRoundedIcon />} tone="warning" />
-        <WarehouseKpi label="Itens reservados" value={String(reservedMaterials.length + reservedEquipment.length)} icon={<AssignmentTurnedInRoundedIcon />} tone="success" />
-        <WarehouseKpi label="Estoque baixo/em falta" value={String(lowStock.length)} icon={<WarningAmberRoundedIcon />} tone={lowStock.length ? "warning" : "success"} />
-      </Box>
+      <Collapse in={summaryOpen}>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" }, gap: 2 }}>
+          <WarehouseKpi label="Materiais a reservar" value={String(pendingMaterials.length)} icon={<Inventory2RoundedIcon />} tone="warning" />
+          <WarehouseKpi label="Equipamentos solicitados" value={String(requestedEquipment.length)} icon={<BuildRoundedIcon />} tone="warning" />
+          <WarehouseKpi label="Itens reservados" value={String(reservedMaterials.length + reservedEquipment.length)} icon={<AssignmentTurnedInRoundedIcon />} tone="success" />
+          <WarehouseKpi label="Estoque baixo/em falta" value={String(lowStock.length)} icon={<WarningAmberRoundedIcon />} tone={lowStock.length ? "warning" : "success"} />
+        </Box>
+      </Collapse>
+
+      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, borderRadius: 2 }}>
+        <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ md: "center" }} gap={1.5} sx={{ mb: 1.5 }}>
+          <Box>
+            <Typography variant="h6">Consulta rapida do estoque</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Busque pelo item e clique para ver em qual servico ele esta sendo usado.
+            </Typography>
+          </Box>
+          <TextField
+            size="small"
+            label="Buscar material, equipamento ou servico"
+            value={inventoryQuery}
+            onChange={(event) => setInventoryQuery(event.target.value)}
+            sx={{ width: { xs: "100%", md: 360 } }}
+          />
+        </Stack>
+
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", xl: "1fr 1fr" }, gap: 2 }}>
+          <InventoryTable
+            title="Materiais"
+            emptyText="Nenhum material encontrado."
+            rows={filteredMaterials.map((material) => {
+              const usage = materialUsageFor(material.id);
+              return {
+                id: material.id,
+                name: material.name,
+                detail: `${material.currentStock} ${material.unit} em estoque`,
+                status: getMaterialOperationalStatus(material),
+                usageCount: usage.length,
+                onClick: () => setSelectedInventory({ type: "material", id: material.id }),
+              };
+            })}
+          />
+          <InventoryTable
+            title="Equipamentos"
+            emptyText="Nenhum equipamento encontrado."
+            rows={filteredEquipment.map((item) => {
+              const usage = equipmentUsageFor(item.id);
+              return {
+                id: item.id,
+                name: item.name,
+                detail: item.code || "Sem codigo",
+                status: item.status,
+                usageCount: usage.length,
+                onClick: () => setSelectedInventory({ type: "equipment", id: item.id }),
+              };
+            })}
+          />
+        </Box>
+      </Paper>
 
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", xl: "1.1fr 0.9fr" }, gap: 2 }}>
         <Paper variant="outlined" sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2 }}>
@@ -220,7 +357,125 @@ export function WarehouseView({
           </Box>
         )}
       </Paper>
+
+      <Dialog open={Boolean(selectedInventory)} onClose={() => setSelectedInventory(null)} fullWidth maxWidth="sm">
+        <DialogTitle>{selectedMaterial?.name ?? selectedEquipment?.name ?? "Item do estoque"}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {selectedMaterial && (
+                <>
+                  <Chip label={`${selectedMaterial.currentStock} ${selectedMaterial.unit} em estoque`} />
+                  <StatusChip value={getMaterialOperationalStatus(selectedMaterial)} />
+                </>
+              )}
+              {selectedEquipment && (
+                <>
+                  <Chip label={selectedEquipment.code || "Sem codigo"} />
+                  <StatusChip value={selectedEquipment.status} />
+                </>
+              )}
+            </Stack>
+            <Typography variant="subtitle1" fontWeight={900}>
+              Onde esta em uso
+            </Typography>
+            {selectedUsage.length === 0 ? (
+              <Alert severity="success">Este item esta livre no estoque.</Alert>
+            ) : (
+              <Stack spacing={1}>
+                {selectedUsage.map((usage) => (
+                  <Box key={usage.link.id} sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: "divider", bgcolor: "background.default" }}>
+                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" gap={1}>
+                      <Box>
+                        <Typography fontWeight={900}>{usage.order?.title ?? "Servico"}</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {usage.order?.customerName ?? "Cliente"} - Supervisor: {usage.supervisor?.name ?? "Nao definido"}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {usage.order?.scheduledStart ? formatDateTime(usage.order.scheduledStart) : "Sem data"}
+                          {usage.kind === "material" ? ` | Planejado ${usage.link.plannedQuantity}` : ` | ${usage.link.conditionBefore}`}
+                        </Typography>
+                      </Box>
+                      <StatusChip value={usage.link.status} />
+                    </Stack>
+                  </Box>
+                ))}
+              </Stack>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedInventory(null)}>Fechar</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
+  );
+}
+
+function InventoryTable({
+  emptyText,
+  rows,
+  title,
+}: {
+  emptyText: string;
+  rows: Array<{
+    detail: string;
+    id: string;
+    name: string;
+    onClick: () => void;
+    status: unknown;
+    usageCount: number;
+  }>;
+  title: string;
+}) {
+  return (
+    <Paper variant="outlined" sx={{ borderRadius: 2, overflow: "hidden" }}>
+      <Box sx={{ px: 1.5, py: 1.2, borderBottom: 1, borderColor: "divider", bgcolor: "background.default" }}>
+        <Typography fontWeight={900}>{title}</Typography>
+      </Box>
+      {rows.length === 0 ? (
+        <Box sx={{ p: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            {emptyText}
+          </Typography>
+        </Box>
+      ) : (
+        <TableContainer>
+          <Table size="small" aria-label={`Tabela de ${title.toLowerCase()}`}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Item</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Uso</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow key={row.id} hover onClick={row.onClick} sx={{ cursor: "pointer" }}>
+                  <TableCell>
+                    <Typography fontWeight={850}>{row.name}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {row.detail}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <StatusChip value={row.status} />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      color={row.usageCount ? "info" : "success"}
+                      variant={row.usageCount ? "filled" : "outlined"}
+                      label={row.usageCount ? "Em uso" : "Livre"}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Paper>
   );
 }
 

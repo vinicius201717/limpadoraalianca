@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { canManageChecklistForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canEditChecklist } from "@/lib/permissions";
-import { deleteOrCancelChecklistItem, getChecklistForServiceOrder, updateChecklistItem } from "@/lib/store";
+import { deleteOrCancelChecklistItem, flushDatabasePersistence, getChecklistForServiceOrder, updateChecklistItem } from "@/lib/store";
 
 const updateChecklistItemSchema = z.object({
   title: z.string().min(2).optional(),
@@ -25,7 +26,7 @@ const updateChecklistItemSchema = z.object({
   allowCollaboratorAction: z.boolean().optional(),
 });
 
-export async function PATCH(
+async function PATCHHandler(
   request: NextRequest,
   context: { params: Promise<{ id: string; itemId: string }> },
 ) {
@@ -50,10 +51,11 @@ export async function PATCH(
   }
   if (!result.item) return NextResponse.json({ message: "Nao foi possivel editar item." }, { status: 400 });
 
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress });
 }
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   context: { params: Promise<{ id: string; itemId: string }> },
 ) {
@@ -70,9 +72,13 @@ export async function DELETE(
   const result = deleteOrCancelChecklistItem(id, itemId, auth.user);
   if (!result.item) return NextResponse.json({ message: "Nao foi possivel remover item." }, { status: 400 });
 
+  await flushDatabasePersistence();
   return NextResponse.json({
     item: result.item,
     deleted: result.deleted,
     progress: getChecklistForServiceOrder(id).progress,
   });
 }
+
+export const PATCH = withDatabase(PATCHHandler);
+export const DELETE = withDatabase(DELETEHandler);

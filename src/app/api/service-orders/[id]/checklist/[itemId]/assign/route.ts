@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { canManageChecklistForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canOperateChecklist } from "@/lib/permissions";
-import { assignChecklistItem, getChecklistForServiceOrder } from "@/lib/store";
+import { assignChecklistItem, flushDatabasePersistence, getChecklistForServiceOrder } from "@/lib/store";
 
 const assignSchema = z.object({
   employeeId: z.string().optional(),
@@ -13,7 +14,7 @@ const assignSchema = z.object({
   message: "Informe pelo menos um colaborador.",
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id, itemId } = await context.params;
@@ -28,5 +29,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (result.error === "EMPLOYEE_NOT_IN_TEAM") {
     return NextResponse.json({ message: "Colaborador precisa estar ativo e fazer parte da equipe da OS." }, { status: 400 });
   }
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

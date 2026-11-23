@@ -12,8 +12,10 @@ const labels: Record<string, string> = {
 
   ACTIVE: "Ativo",
   INACTIVE: "Inativo",
-  ON_LEAVE: "Afastado",
-  FIRED: "Desligado",
+  VACATION: "Ferias",
+  ON_LEAVE: "Licenca",
+  SUSPENDED: "Suspenso",
+  FIRED: "Demitido",
 
   NEW: "Novo",
   CONTACTED: "Contato feito",
@@ -106,6 +108,19 @@ const labels: Record<string, string> = {
   AFTER: "Depois",
   EVIDENCE: "Evidencia",
   PROBLEM: "Problema",
+
+  GASOLINA: "Gasolina",
+  ALMOCO: "Almoco",
+  MATERIAL_OU_PRODUTO: "Material ou produto",
+  OUTROS: "Outros",
+
+  SUGESTAO: "Sugestao",
+  RECLAMACAO: "Reclamacao",
+  ELOGIO: "Elogio",
+  MELHORIA: "Melhoria",
+  SEGURANCA: "Seguranca",
+  REVIEWED: "Lido",
+  ARCHIVED: "Arquivado",
 
   SUPERVISOR: "Supervisor",
   POLIDOR: "Polidor",

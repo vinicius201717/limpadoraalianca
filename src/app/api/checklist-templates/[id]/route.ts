@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -25,7 +26,7 @@ const templateSchema = z.object({
   items: z.array(templateItemSchema).optional(),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id } = await context.params;
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   });
 }
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function PATCHHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   if (!canManageChecklistTemplates(auth.user.role)) {
@@ -51,7 +52,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   return NextResponse.json(result);
 }
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function DELETEHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   if (!canManageChecklistTemplates(auth.user.role)) {
@@ -62,3 +63,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   if (result.error === "NOT_FOUND") return NextResponse.json({ message: "Template nao encontrado." }, { status: 404 });
   return NextResponse.json(result);
 }
+
+export const GET = withDatabase(GETHandler);
+export const PATCH = withDatabase(PATCHHandler);
+export const DELETE = withDatabase(DELETEHandler);

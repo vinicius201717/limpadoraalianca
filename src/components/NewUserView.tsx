@@ -22,10 +22,12 @@ const roles: UserRole[] = [
 export function NewUserView({ employees }: { employees: Employee[] }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [role, setRole] = useState<UserRole>("COLABORADOR");
-  const [temporaryPassword, setTemporaryPassword] = useState("123456");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
   const [linkedEmployeeId, setLinkedEmployeeId] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [canViewFinancials, setCanViewFinancials] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -42,10 +44,12 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
       body: JSON.stringify({
         name,
         email,
+        phone,
         role,
         temporaryPassword,
         linkedEmployeeId: linkedEmployeeId || undefined,
         isActive,
+        canViewFinancials: role === "GERENTE" ? canViewFinancials : false,
       }),
     });
     const data = await response.json().catch(() => null);
@@ -63,9 +67,11 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
     setNotice(data?.message ?? "Usuario criado com sucesso.");
     setName("");
     setEmail("");
+    setPhone("");
     setRole("COLABORADOR");
+    setCanViewFinancials(false);
     setLinkedEmployeeId("");
-    setTemporaryPassword("123456");
+    setTemporaryPassword("");
   }
 
   return (
@@ -89,7 +95,16 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
         <Stack component="form" spacing={2.2} onSubmit={submit}>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
             <TextField label="Nome" value={name} onChange={(event) => setName(event.target.value)} required />
-            <TextField label="E-mail de login" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+            <TextField
+              label="Telefone de login"
+              type="tel"
+              inputMode="tel"
+              placeholder="62999999999"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              required
+            />
+            <TextField label="E-mail opcional" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
             <TextField select label="Perfil" value={role} onChange={(event) => setRole(event.target.value as UserRole)}>
               {roles.map((option) => (
                 <MenuItem key={option} value={option}>
@@ -113,6 +128,16 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
               ))}
             </TextField>
             <FormControlLabel control={<Checkbox checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />} label="Usuario ativo" />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={role === "FINANCEIRO" || (role === "GERENTE" && canViewFinancials)}
+                  disabled={role !== "GERENTE"}
+                  onChange={(event) => setCanViewFinancials(event.target.checked)}
+                />
+              }
+              label={role === "FINANCEIRO" ? "Acesso financeiro liberado pelo perfil" : "Permitir acesso financeiro para gerente"}
+            />
           </Box>
 
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} justifyContent="flex-end">

@@ -1,7 +1,12 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { createPublicQuoteLead, ensureDatabaseReady, isDatabasePersistenceAvailable } from "@/lib/store";
+import {
+  createPublicQuoteLead,
+  ensureDatabaseReady,
+  flushDatabasePersistence,
+} from "@/lib/store";
 
 const quoteRequestSchema = z.object({
   name: z.string().trim().max(120).optional().default(""),
@@ -10,7 +15,7 @@ const quoteRequestSchema = z.object({
   message: z.string().trim().max(600).optional().default(""),
 });
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   await ensureDatabaseReady();
 
   const parsed = quoteRequestSchema.safeParse(await request.json());
@@ -19,6 +24,8 @@ export async function POST(request: NextRequest) {
   }
 
   const lead = createPublicQuoteLead(parsed.data);
-  const persisted = isDatabasePersistenceAvailable();
-  return NextResponse.json({ ok: true, leadId: lead.id, persisted }, { status: persisted ? 201 : 202 });
+  await flushDatabasePersistence();
+  return NextResponse.json({ ok: true, leadId: lead.id, persisted: true }, { status: 201 });
 }
+
+export const POST = withDatabase(POSTHandler);

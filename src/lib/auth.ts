@@ -21,13 +21,19 @@ export async function verifySessionToken(token?: string): Promise<SessionUser | 
     await ensureDatabaseReady();
     const currentUser = getSystemUserForSession(decoded.id);
     if (!currentUser) return null;
+    if ((decoded.sessionVersion ?? 0) !== (currentUser.sessionVersion ?? 0)) return null;
 
     return {
       id: currentUser.id,
       name: currentUser.name,
       email: currentUser.email,
+      phone: currentUser.phone,
       role: currentUser.role,
       isActive: currentUser.isActive,
+      canViewFinancials: currentUser.canViewFinancials,
+      avatarUrl: currentUser.avatarUrl,
+      sessionVersion: currentUser.sessionVersion ?? 0,
+      mustChangePassword: currentUser.mustChangePassword,
     };
   } catch {
     return null;

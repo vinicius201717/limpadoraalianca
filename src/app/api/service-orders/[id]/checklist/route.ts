@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -5,7 +6,7 @@ import { canManageChecklistForOrder } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canCreateChecklist } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
-import { createChecklistItem, db, getChecklistForServiceOrder } from "@/lib/store";
+import { createChecklistItem, db, flushDatabasePersistence, getChecklistForServiceOrder } from "@/lib/store";
 
 const checklistItemSchema = z.object({
   title: z.string().min(2),
@@ -22,7 +23,7 @@ const checklistItemSchema = z.object({
   allowCollaboratorAction: z.boolean().optional().default(false),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   return NextResponse.json(getChecklistForServiceOrder(id));
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -61,5 +62,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
   if (!result.item) return NextResponse.json({ message: "Nao foi possivel criar item." }, { status: 400 });
 
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress }, { status: 201 });
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);

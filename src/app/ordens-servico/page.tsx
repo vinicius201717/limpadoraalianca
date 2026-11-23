@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { ModuleScreen } from "@/components/ModuleScreen";
 import { getCurrentUser } from "@/lib/auth";
 import { getModuleConfig } from "@/lib/module-config";
@@ -8,7 +9,7 @@ export default async function ServiceOrdersPage() {
   const user = await getCurrentUser();
   const baseConfig = getModuleConfig("ordens-servico");
   const rows = user ? getAccessibleServiceOrders(user) : [];
-  const columns = user && canViewServiceOrderFinancials(user.role)
+  const columns = user && canViewServiceOrderFinancials(user)
     ? baseConfig.columns
     : baseConfig.columns.filter((column) => column.key !== "revenue");
 

@@ -55,10 +55,16 @@ function hasEmployeeLink(orderId: string, employeeId: string | undefined, contex
   if (!employeeId) return false;
   const data = contextOrStore(context);
   const order = data.serviceOrders.find((item) => item.id === orderId);
+  if (!order) return false;
   return Boolean(
     data.serviceOrderEmployees.some((link) => link.serviceOrderId === orderId && link.employeeId === employeeId) ||
-      order?.employeeIds.includes(employeeId),
+      order.supervisorEmployeeId === employeeId ||
+      (order.employeeIds ?? []).includes(employeeId),
   );
+}
+
+function canUseWarehouseScope(operation: ServiceOrderOperation) {
+  return operation === "materials" || operation === "equipment";
 }
 
 function isDesignatedSupervisor(user: SessionUser, order: ServiceOrder) {
@@ -109,7 +115,8 @@ export function authorizeServiceOrderAccess(
   if (user.role === "OWNER") scope = "full";
   else if (canAccessAllServiceOrders(user.role)) scope = "operational";
   else if (canViewFinancialServiceOrders(user.role)) scope = "financial";
-  else if (canViewWarehouseServiceOrders(user.role) && isWarehouseRelevant(order, context)) scope = "warehouse";
+  else if (user.role === "ALMOXARIFADO" && hasEmployeeLink(order.id, getLinkedEmployeeId(user), context)) scope = "assigned";
+  else if (canViewWarehouseServiceOrders(user.role) && canUseWarehouseScope(operation) && isWarehouseRelevant(order, context)) scope = "warehouse";
   else if (user.role === "SUPERVISOR_OBRA" && isDesignatedSupervisor(user, order)) scope = "assigned";
   else if (user.role === "COLABORADOR" && hasEmployeeLink(order.id, getLinkedEmployeeId(user), context)) scope = "assigned";
 
@@ -117,13 +124,14 @@ export function authorizeServiceOrderAccess(
     throw new ServiceOrderAuthorizationError("FORBIDDEN", "Perfil sem permissao para acessar esta OS.", 403);
   }
 
-  const canViewFinancialFields = canViewServiceOrderFinancials(user.role);
+  const canViewFinancialFields = canViewServiceOrderFinancials(user);
+
   return {
     allowed: true as const,
     operation,
     scope,
     order,
-    sanitizedOrder: sanitizeServiceOrderForRole(user.role, order),
+    sanitizedOrder: sanitizeServiceOrderForRole(user, order),
     visibleFields: {
       financial: canViewFinancialFields,
       internalNotes: scope === "full" || scope === "operational",

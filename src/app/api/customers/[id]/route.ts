@@ -1,7 +1,11 @@
-import { itemHandlers } from "@/lib/api-handlers";
+import { withDatabase } from "@/lib/with-database";
+import { commercialItem } from "@/lib/commercial-handlers";
 
-const handlers = itemHandlers("customers", "customer");
+const handlers = commercialItem("clientes");
+const GETHandler = handlers.GET;
+const PATCHHandler = handlers.PATCH;
+const DELETEHandler = handlers.DELETE;
 
-export const GET = handlers.GET;
-export const PATCH = handlers.PATCH;
-export const DELETE = handlers.DELETE;
+export const GET = withDatabase(GETHandler);
+export const PATCH = withDatabase(PATCHHandler);
+export const DELETE = withDatabase(DELETEHandler);

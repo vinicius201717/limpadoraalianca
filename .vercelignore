@@ -6,6 +6,7 @@
 node_modules
 data
 backups
+.private
 dev-server*.log
 tsconfig.tsbuildinfo
 

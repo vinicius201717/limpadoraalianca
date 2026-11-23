@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canPromoteSupervisorToManager } from "@/lib/permissions";
 import { promoteSupervisorToManager, toPublicUser } from "@/lib/store";
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -32,3 +33,5 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     user: toPublicUser(result.user),
   });
 }
+
+export const POST = withDatabase(POSTHandler);

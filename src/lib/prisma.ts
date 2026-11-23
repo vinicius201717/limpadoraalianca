@@ -8,6 +8,14 @@ const globalPrisma = globalThis as typeof globalThis & {
   __floorRestorationPrisma?: PrismaClient;
 };
 
+function normalizeMariaDbUrl(databaseUrl: string) {
+  if (databaseUrl.startsWith("mysql://")) {
+    return `mariadb://${databaseUrl.slice("mysql://".length)}`;
+  }
+
+  return databaseUrl;
+}
+
 export function getPrisma() {
   if (!globalPrisma.__floorRestorationPrisma) {
     const databaseUrl = process.env.DATABASE_URL;
@@ -16,7 +24,7 @@ export function getPrisma() {
     }
 
     globalPrisma.__floorRestorationPrisma = new PrismaClient({
-      adapter: new PrismaMariaDb(databaseUrl),
+      adapter: new PrismaMariaDb(normalizeMariaDbUrl(databaseUrl)),
     });
   }
 

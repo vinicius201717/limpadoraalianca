@@ -1,12 +1,15 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canPrepareServiceMaterials, canRequestServiceMaterials } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
-import { canUserAccessOrder, db, queueDatabasePersist, recordAuditLog } from "@/lib/store";
+import { canUserAccessOrder, db, flushDatabasePersistence, queueDatabasePersist, recordAuditLog } from "@/lib/store";
 import { normalizeStockStatus } from "@/lib/stock-status";
-import type { ServiceOrderEquipment } from "@/lib/types";
+import type { ServiceOrderEquipment, SessionUser } from "@/lib/types";
+import { applyEquipmentMovement, InventoryError, isArchivedStockItem } from "@/lib/inventory-operations";
+import { randomUUID } from "node:crypto";
 
 const equipmentRequestSchema = z.object({
   equipmentId: z.string(),
@@ -22,7 +25,11 @@ const equipmentPatchSchema = z.object({
   notes: z.string().optional(),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+function canManageOrderEquipment(user: SessionUser, order: (typeof db.serviceOrders)[number]) {
+  return canPrepareServiceMaterials(user.role) || (canRequestServiceMaterials(user.role) && canUserAccessOrder(user, order));
+}
+
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -43,7 +50,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   return NextResponse.json({ equipment });
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -60,7 +67,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
 
   const stockItem = db.equipment.find((item) => item.id === parsed.data.equipmentId);
-  if (!stockItem) return NextResponse.json({ message: "Equipamento nao encontrado." }, { status: 404 });
+  if (!stockItem || isArchivedStockItem(stockItem)) return NextResponse.json({ message: "Equipamento ativo nao encontrado." }, { status: 404 });
+  if (["DONE", "DELIVERED", "CANCELED"].includes(order.status)) return NextResponse.json({ message: "OS encerrada nao recebe novos equipamentos." }, { status: 409 });
   if (normalizeStockStatus(stockItem.status) !== "AVAILABLE") {
     return NextResponse.json({ message: "Equipamento nao esta disponivel para solicitacao." }, { status: 400 });
   }
@@ -73,7 +81,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
   const now = new Date().toISOString();
   const serviceEquipment: ServiceOrderEquipment = {
-    id: `soequip-${Date.now()}`,
+    id: `soequip-${randomUUID()}`,
     serviceOrderId: id,
     equipmentId: stockItem.id,
     status: "REQUESTED",
@@ -92,15 +100,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     newValueJson: serviceEquipment,
   });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({ equipment: serviceEquipment }, { status: 201 });
 }
 
-export async function PATCH(request: NextRequest) {
+async function PATCHHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
-  if (!canPrepareServiceMaterials(auth.user.role)) {
-    return NextResponse.json({ message: "Perfil sem permissao para preparar equipamentos." }, { status: 403 });
-  }
 
   const parsed = equipmentPatchSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -109,39 +116,26 @@ export async function PATCH(request: NextRequest) {
 
   const link = db.serviceOrderEquipment.find((item) => item.id === parsed.data.id);
   if (!link) return NextResponse.json({ message: "Equipamento da OS nao encontrado." }, { status: 404 });
+  const { id } = await context.params;
+  if (link.serviceOrderId !== id) return NextResponse.json({ message: "Equipamento nao pertence a esta OS." }, { status: 404 });
+  const order = db.serviceOrders.find((item) => item.id === link.serviceOrderId);
+  if (!order) return NextResponse.json({ message: "OS nao encontrada." }, { status: 404 });
+  if (!canManageOrderEquipment(auth.user, order)) {
+    return NextResponse.json({ message: "Perfil sem permissao para atualizar equipamentos desta OS." }, { status: 403 });
+  }
+  const canPrepare = canPrepareServiceMaterials(auth.user.role);
+  if (!canPrepare && !["REQUESTED", "IN_USE", "CANCELED"].includes(parsed.data.status)) {
+    return NextResponse.json({ message: "Supervisor pode solicitar, marcar em uso ou remover. Reserva/retorno ficam com o almoxarifado." }, { status: 403 });
+  }
   const stockItem = db.equipment.find((item) => item.id === link.equipmentId);
   if (!stockItem) return NextResponse.json({ message: "Equipamento de estoque nao encontrado." }, { status: 404 });
 
   const oldValueJson = { link: { ...link }, equipment: { ...stockItem } };
-  const now = new Date().toISOString();
-  link.status = parsed.data.status;
-  link.conditionBefore = parsed.data.conditionBefore ?? link.conditionBefore;
-  link.conditionAfter = parsed.data.conditionAfter ?? link.conditionAfter;
-  link.notes = parsed.data.notes ?? link.notes;
-  link.updatedAt = now;
-
-  if (parsed.data.status === "RESERVED") {
-    link.reservedAt = now;
-    stockItem.status = "RESERVED";
-  }
-  if (parsed.data.status === "DELIVERED" || parsed.data.status === "IN_USE") {
-    link.deliveredAt = link.deliveredAt ?? now;
-    link.deliveredByUserId = auth.user.id;
-    stockItem.status = "RESERVED";
-  }
-  if (parsed.data.status === "RETURNED") {
-    link.returnedAt = now;
-    link.returnedByUserId = auth.user.id;
-    stockItem.status = "AVAILABLE";
-  }
-  if (parsed.data.status === "DAMAGED") {
-    stockItem.status = "DAMAGED";
-  }
-  if (parsed.data.status === "LOST") {
-    stockItem.status = "UNAVAILABLE";
-  }
-  if (parsed.data.status === "CANCELED") {
-    stockItem.status = "AVAILABLE";
+  try {
+    applyEquipmentMovement(stockItem, link, parsed.data, db.serviceOrderEquipment, auth.user.id);
+  } catch (error) {
+    if (error instanceof InventoryError) return NextResponse.json({ message: error.message }, { status: 409 });
+    throw error;
   }
 
   recordAuditLog({
@@ -153,6 +147,11 @@ export async function PATCH(request: NextRequest) {
     newValueJson: { link, equipment: stockItem },
   });
   queueDatabasePersist();
+  await flushDatabasePersistence();
 
   return NextResponse.json({ equipment: link, stockEquipment: stockItem });
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);
+export const PATCH = withDatabase(PATCHHandler);

@@ -1,6 +1,3 @@
-import { NewRecordView } from "@/components/NewRecordView";
-import { getModuleConfig } from "@/lib/module-config";
-
-export default function NewQuotePage() {
-  return <NewRecordView config={getModuleConfig("orcamentos")} />;
-}
+import { CommercialPage } from "@/components/CommercialPage";
+export const dynamic = "force-dynamic";
+export default function Page() { return <CommercialPage module="orcamentos" id="novo" />; }

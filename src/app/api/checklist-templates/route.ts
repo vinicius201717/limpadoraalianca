@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -23,7 +24,7 @@ const templateSchema = z.object({
   items: z.array(templateItemSchema).optional(),
 });
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const templates = db.checklistTemplates.map((template) => ({
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ templates });
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   if (!canManageChecklistTemplates(auth.user.role)) {
@@ -44,3 +45,6 @@ export async function POST(request: NextRequest) {
   const result = createChecklistTemplate(parsed.data, auth.user);
   return NextResponse.json(result, { status: 201 });
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);

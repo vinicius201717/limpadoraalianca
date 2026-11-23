@@ -1,9 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
+import { db } from "@/lib/store";
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -16,16 +18,20 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     }
     throw error;
   }
-  return NextResponse.json({
-    photos: [
-      { id: `photo-${id}-before`, stage: "Antes", url: "/placeholder-before.jpg" },
-      { id: `photo-${id}-during`, stage: "Durante", url: "/placeholder-during.jpg" },
-      { id: `photo-${id}-after`, stage: "Depois", url: "/placeholder-after.jpg" },
-    ],
-  });
+  const photos = db.serviceOrderChecklistPhotos
+    .filter((photo) => photo.serviceOrderId === id)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .map((photo) => ({
+      ...photo,
+      checklistItemTitle: db.serviceOrderChecklistItems.find((item) => item.id === photo.checklistItemId)?.title ?? "",
+      uploadedByName: db.users.find((user) => user.id === photo.uploadedByUserId)?.name ?? "",
+      employeeName: photo.employeeId ? db.employees.find((employee) => employee.id === photo.employeeId)?.name ?? "" : "",
+    }));
+
+  return NextResponse.json({ photos });
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -38,6 +44,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     throw error;
   }
-  const body = await request.json();
-  return NextResponse.json({ photo: { id: `photo-${Date.now()}`, serviceOrderId: id, ...body } }, { status: 201 });
+  return NextResponse.json(
+    { message: "Anexe fotos diretamente em um item do checklist para manter o historico da OS organizado." },
+    { status: 405, headers: { Allow: "GET" } },
+  );
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);

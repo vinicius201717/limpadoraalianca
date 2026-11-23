@@ -1,11 +1,13 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { canManageChecklistForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
+import { deleteChecklistPhotoFromStorage } from "@/lib/checklist-photo-storage";
 import { canOperateChecklist } from "@/lib/permissions";
-import { getChecklistForServiceOrder, removeChecklistPhoto } from "@/lib/store";
+import { flushDatabasePersistence, getChecklistForServiceOrder, removeChecklistPhoto } from "@/lib/store";
 
-export async function DELETE(
+async function DELETEHandler(
   request: NextRequest,
   context: { params: Promise<{ id: string; itemId: string; photoId: string }> },
 ) {
@@ -19,5 +21,13 @@ export async function DELETE(
   }
   const result = removeChecklistPhoto(id, itemId, photoId, auth.user);
   if (result.error === "NOT_FOUND") return NextResponse.json({ message: "Foto nao encontrada." }, { status: 404 });
+  if (result.photo?.url) {
+    await deleteChecklistPhotoFromStorage(result.photo.url).catch((error) => {
+      console.error("[checklist-photos] storage delete failed", error);
+    });
+  }
+  await flushDatabasePersistence();
   return NextResponse.json({ photo: result.photo, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const DELETE = withDatabase(DELETEHandler);

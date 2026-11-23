@@ -1,6 +1,11 @@
 import "server-only";
 
 import bcrypt from "bcryptjs";
+import { expenseTotal, reconcileExpenseLedger, type ServicePayment } from "./finance-operations";
+import { randomUUID, randomInt } from "node:crypto";
+import { assertStoreReady, createStateProxy, loadState } from "./request-store";
+import { newPasswordSchema } from "./password-policy";
+import { getServiceOrderTransitionError } from "./service-order-transitions";
 
 import {
   auditLogs,
@@ -23,20 +28,22 @@ import {
   serviceOrderChecklistPhotos,
   serviceOrderEmployees,
   serviceOrderEquipment,
+  serviceExpenses,
+  companyFeedbacks,
   serviceOrderMaterials,
   siteBeforeAfters,
   siteTestimonials,
   serviceOrders,
   supervisorEvaluations,
-  users,
 } from "./demo-data";
-import { readAppState, writeAppState } from "./app-state-db";
+
 import {
   canAccessAllServiceOrders,
   canAccessServiceOrderByAssignment,
   canCreateUserWithRole,
   canManageEmployeeUserAccess,
   canManageTargetUserRole,
+  canViewEmployeeProfileByRole,
   canViewFinancialServiceOrders,
   canViewServiceOrderFinancials,
   canViewWarehouseServiceOrders,
@@ -56,6 +63,10 @@ import type {
   ServiceOrderChecklistEvent,
   ServiceOrderChecklistItem,
   ServiceOrderChecklistPhoto,
+  ServiceExpense,
+  ServiceExpenseCategory,
+  CompanyFeedback,
+  CompanyFeedbackCategory,
   ServiceOrderMaterial,
   SiteBeforeAfter,
   SiteTestimonial,
@@ -65,73 +76,67 @@ import type {
   UserRole,
 } from "./types";
 
-const demoPasswordHash = bcrypt.hashSync("123456", 10);
-const appStateId = "floor-restoration-manager";
-
-const systemUsers: SystemUser[] = users.map((user) => ({
-  ...user,
-  passwordHash: demoPasswordHash,
-  linkedEmployeeId: employees.find((employee) => employee.userId === user.id)?.id,
-  lastLoginAt: undefined,
-  createdAt: "2026-06-01T08:00:00",
-  updatedAt: "2026-07-02T08:00:00",
-}));
-
 const initialDb = {
-  users: [...systemUsers],
-  customers: [...customers],
-  leads: [...leads],
-  inspections: [...inspections],
-  quotes: [...quotes],
-  serviceOrders: [...serviceOrders],
-  serviceOrderEmployees: [...serviceOrderEmployees],
-  serviceOrderChecklistItems: [...serviceOrderChecklistItems],
-  serviceOrderChecklistPhotos: [...serviceOrderChecklistPhotos],
-  serviceOrderChecklistEvents: [...serviceOrderChecklistEvents],
-  checklistTemplates: [...checklistTemplates],
-  checklistTemplateItems: [...checklistTemplateItems],
-  serviceOrderMaterials: [...serviceOrderMaterials],
-  serviceOrderEquipment: [...serviceOrderEquipment],
-  siteBeforeAfters: [...siteBeforeAfters],
-  siteTestimonials: [...siteTestimonials],
-  materialRequests: [...materialRequests],
-  materialRequestItems: [...materialRequestItems],
-  employees: [...employees],
-  evaluations: [...evaluations],
-  supervisorEvaluations: [...supervisorEvaluations],
-  materials: [...materials],
-  equipment: [...equipment],
-  scheduleEvents: [...scheduleEvents],
-  auditLogs: [...auditLogs],
-  dashboardMetrics: [...dashboardMetrics],
+  whatsappLinks: [] as import("./whatsapp-types").WhatsAppLink[],
+  whatsappMessages: [] as import("./whatsapp-types").WhatsAppMessage[],
+  assistantCommands: [] as import("./whatsapp-types").AssistantCommand[],
+  workHistory: [] as import("./whatsapp-types").WorkHistoryEntry[],
+  employeeWarnings: [] as import("./whatsapp-types").EmployeeWarning[],
+  financialDocuments: [] as import("./whatsapp-types").FinancialDocument[],
+  workReports: [] as import("./whatsapp-types").WorkReport[],
+  users: [] as SystemUser[],
+  servicePayments: [] as ServicePayment[],
+  warranties: [] as import("./types").Warranty[],
+  customers: [] as typeof customers,
+  leads: [] as typeof leads,
+  inspections: [] as typeof inspections,
+  quotes: [] as typeof quotes,
+  serviceOrders: [] as typeof serviceOrders,
+  serviceOrderEmployees: [] as typeof serviceOrderEmployees,
+  serviceOrderChecklistItems: [] as typeof serviceOrderChecklistItems,
+  serviceOrderChecklistPhotos: [] as typeof serviceOrderChecklistPhotos,
+  serviceOrderChecklistEvents: [] as typeof serviceOrderChecklistEvents,
+  checklistTemplates: [] as typeof checklistTemplates,
+  checklistTemplateItems: [] as typeof checklistTemplateItems,
+  serviceOrderMaterials: [] as typeof serviceOrderMaterials,
+  serviceOrderEquipment: [] as typeof serviceOrderEquipment,
+  serviceExpenses: [] as typeof serviceExpenses,
+  companyFeedbacks: [] as typeof companyFeedbacks,
+  siteBeforeAfters: [] as typeof siteBeforeAfters,
+  siteTestimonials: [] as typeof siteTestimonials,
+  materialRequests: [] as typeof materialRequests,
+  materialRequestItems: [] as typeof materialRequestItems,
+  employees: [] as typeof employees,
+  evaluations: [] as typeof evaluations,
+  supervisorEvaluations: [] as typeof supervisorEvaluations,
+  materials: [] as typeof materials,
+  equipment: [] as typeof equipment,
+  scheduleEvents: [] as typeof scheduleEvents,
+  auditLogs: [] as typeof auditLogs,
+  dashboardMetrics: [] as typeof dashboardMetrics,
 };
 
 type DemoDb = typeof initialDb;
 
-const globalStore = globalThis as typeof globalThis & {
-  __floorRestorationDb?: DemoDb;
-  __floorRestorationHydrated?: boolean;
-  __floorRestorationHydrationPromise?: Promise<void>;
-  __floorRestorationPersistPromise?: Promise<void>;
-  __floorRestorationDatabaseAvailable?: boolean;
-};
-
-if (!globalStore.__floorRestorationDb) {
-  globalStore.__floorRestorationDb = initialDb;
-}
-
-const db = globalStore.__floorRestorationDb;
-globalStore.__floorRestorationPersistPromise ??= Promise.resolve();
+const db = createStateProxy<DemoDb>();
 
 type ResourceKey = keyof typeof db;
 type MutableResourceKey = Exclude<ResourceKey, "dashboardMetrics">;
 
 function makeId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  return `${prefix}-${randomUUID()}`;
 }
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function normalizePhone(phone?: string) {
+  return String(phone ?? "").replace(/\D/g, "");
+}
+
+function makeInternalEmailFromPhone(phone: string) {
+  return `${normalizePhone(phone)}@telefone.alianca.local`;
 }
 
 function removePasswordHash<T extends Partial<SystemUser>>(user: T) {
@@ -141,6 +146,7 @@ function removePasswordHash<T extends Partial<SystemUser>>(user: T) {
 }
 
 function sanitizeLogValue(value: unknown): unknown {
+  if (typeof value === "string" && value.startsWith("data:")) return "[arquivo incorporado omitido do log]";
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map((item) => sanitizeLogValue(item));
   const blockedKeys = new Set(["password", "passwordHash", "temporaryPassword", "token", "jwt", "cookie"]);
@@ -148,61 +154,104 @@ function sanitizeLogValue(value: unknown): unknown {
   return Object.fromEntries(entries.map(([key, item]) => [key, sanitizeLogValue(item)]));
 }
 
-function snapshotDbState(): DemoDb {
-  return JSON.parse(JSON.stringify(db)) as DemoDb;
+export async function ensureDatabaseReady() { await loadState(initialDb); }
+// Mutations are committed once, by withDatabase, before returning a successful response.
+export function queueDatabasePersist() { assertStoreReady(); }
+export async function flushDatabasePersistence() { assertStoreReady(); }
+export function isDatabasePersistenceAvailable() { assertStoreReady(); return true; }
+
+export function normalizeClientAccessCode(code: string) {
+  return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-function applyDbState(data: unknown) {
-  if (!data || typeof data !== "object") return;
-  const state = data as Partial<Record<keyof DemoDb, unknown>>;
-  (Object.keys(initialDb) as Array<keyof DemoDb>).forEach((key) => {
-    const nextValue = state[key];
-    if (Array.isArray(nextValue)) {
-      (db[key] as unknown[]).splice(0, (db[key] as unknown[]).length, ...nextValue);
-    }
-  });
+export function createClientAccessCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const makeSegment = () =>
+    Array.from({ length: 8 }, () => alphabet[randomInt(alphabet.length)]).join("");
+
+  let code = "";
+  do {
+    code = `ALI-${makeSegment()}-${makeSegment()}`;
+  } while (
+    db.serviceOrders.some(
+      (order) => normalizeClientAccessCode(order.clientAccessCode ?? "") === normalizeClientAccessCode(code),
+    )
+  );
+
+  return code;
 }
 
-export async function ensureDatabaseReady() {
-  if (globalStore.__floorRestorationHydrated) return;
-  if (!globalStore.__floorRestorationHydrationPromise) {
-    globalStore.__floorRestorationHydrationPromise = (async () => {
-      try {
-        const state = await readAppState(appStateId);
-        if (state) {
-          applyDbState(state);
-        } else {
-          await writeAppState(appStateId, snapshotDbState());
-        }
-        globalStore.__floorRestorationDatabaseAvailable = true;
-        globalStore.__floorRestorationHydrated = true;
-      } catch (error) {
-        globalStore.__floorRestorationDatabaseAvailable = false;
-        globalStore.__floorRestorationHydrated = true;
-        console.error("[store] database unavailable, using bundled in-memory state", error);
-      }
-    })();
+export function ensureServiceOrderClientAccessCode(order: ServiceOrder) {
+  if (order.clientAccessCode) {
+    order.clientAccessEnabled = order.clientAccessEnabled ?? true;
+    return order.clientAccessCode;
   }
-  await globalStore.__floorRestorationHydrationPromise;
+
+  order.clientAccessCode = createClientAccessCode();
+  order.clientAccessEnabled = true;
+  queueDatabasePersist();
+  return order.clientAccessCode;
 }
 
-export function queueDatabasePersist() {
-  if (!globalStore.__floorRestorationHydrated) return;
-  if (globalStore.__floorRestorationDatabaseAvailable === false) return;
-  const snapshot = snapshotDbState();
-  globalStore.__floorRestorationPersistPromise = (globalStore.__floorRestorationPersistPromise ?? Promise.resolve())
-    .catch(() => undefined)
-    .then(async () => {
-      await writeAppState(appStateId, snapshot);
-    });
+export function findServiceOrderByClientAccessCode(code: string) {
+  const normalized = normalizeClientAccessCode(code);
+  if (!normalized) return null;
+
+  return (
+    db.serviceOrders.find(
+      (order) =>
+        order.clientAccessEnabled !== false &&
+        normalizeClientAccessCode(order.clientAccessCode ?? "") === normalized,
+    ) ?? null
+  );
 }
 
-export async function flushDatabasePersistence() {
-  await globalStore.__floorRestorationPersistPromise;
-}
+export function confirmClientServiceDelivery(
+  code: string,
+  input: {
+    clientName?: string;
+    rating?: number;
+    feedback?: string;
+    signatureDataUrl: string;
+    ipAddress?: string;
+  },
+) {
+  const order = findServiceOrderByClientAccessCode(code);
+  if (!order) return { order: null, error: "NOT_FOUND" as const };
+  if (order.clientDeliverySignedAt) return { order, error: "ALREADY_SIGNED" as const };
+  if (getServiceOrderTransitionError(order, "DELIVERED", db, { customerAcceptance: true })) return { order: null, error: "INVALID_STATUS" as const };
 
-export function isDatabasePersistenceAvailable() {
-  return globalStore.__floorRestorationDatabaseAvailable !== false;
+  const now = new Date().toISOString();
+  const oldValueJson = {
+    status: order.status,
+    clientDeliverySignedAt: order.clientDeliverySignedAt,
+    clientRating: order.clientRating,
+  };
+
+  order.clientDeliveryAcceptedBy = input.clientName?.trim() || order.customerName;
+  order.clientRating = input.rating;
+  order.clientFeedback = input.feedback?.trim() ?? "";
+  order.clientDeliverySignatureUrl = input.signatureDataUrl;
+  order.clientDeliverySignedAt = now;
+  order.clientDeliveryIp = input.ipAddress;
+  order.status = "DELIVERED";
+
+  recordAuditLog({
+    action: "CLIENT_DELIVERY_CONFIRMED",
+    entity: "ServiceOrder",
+    entityId: order.id,
+    ipAddress: input.ipAddress,
+    oldValueJson,
+    newValueJson: {
+      status: order.status,
+      clientDeliveryAcceptedBy: order.clientDeliveryAcceptedBy,
+      clientDeliverySignedAt: order.clientDeliverySignedAt,
+      clientRating: order.clientRating,
+      clientFeedback: order.clientFeedback,
+    },
+  });
+  queueDatabasePersist();
+  return { order, error: null };
 }
 
 export function toPublicUser(user: SystemUser) {
@@ -216,6 +265,27 @@ export function toPublicUsers(usersToSanitize = db.users) {
 export function findUserByEmail(email: string) {
   const normalized = normalizeEmail(email);
   return db.users.find((user) => normalizeEmail(user.email) === normalized) ?? null;
+}
+
+export function findUserByPhone(phone: string) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+
+  return (
+    db.users.find((user) => normalizePhone(user.phone) === normalized) ??
+    db.users.find((user) => {
+      const linkedEmployee = db.employees.find((employee) => employee.userId === user.id);
+      return normalizePhone(linkedEmployee?.phone) === normalized;
+    }) ??
+    null
+  );
+}
+
+export function findUserByLogin(login: string) {
+  const normalized = login.trim();
+  if (!normalized) return null;
+  if (normalized.includes("@")) return findUserByEmail(normalized);
+  return findUserByPhone(normalized);
 }
 
 export function getSystemUserForSession(userId: string) {
@@ -233,12 +303,13 @@ export function getActiveOwnerCount() {
   return db.users.filter((user) => user.role === "OWNER" && user.isActive).length;
 }
 
-export async function verifyUserCredentials(email: string, password: string) {
+export async function verifyUserCredentials(login: string, password: string) {
   await ensureDatabaseReady();
-  const user = findUserByEmail(email);
+  const user = findUserByLogin(login);
   const validPassword = user?.passwordHash ? await bcrypt.compare(password, user.passwordHash) : false;
   if (!user || !user.isActive || !validPassword) return null;
 
+  if (!newPasswordSchema.safeParse(password).success) user.mustChangePassword = true;
   user.lastLoginAt = new Date().toISOString();
   user.updatedAt = new Date().toISOString();
   queueDatabasePersist();
@@ -255,8 +326,8 @@ export function findResource<T extends { id: string }>(items: T[], id: string) {
 
 export function createResource(resource: MutableResourceKey, input: Record<string, unknown>) {
   const record = {
-    id: `${resource}-${Date.now()}`,
     ...input,
+    id: makeId(resource),
   };
 
   (db[resource] as Array<Record<string, unknown>>).unshift(record);
@@ -269,7 +340,7 @@ export function updateResource(resource: MutableResourceKey, id: string, input: 
   const index = items.findIndex((item) => item.id === id);
   if (index === -1) return null;
 
-  items[index] = { ...items[index], ...input };
+  items[index] = { ...items[index], ...input, id };
   queueDatabasePersist();
   return items[index];
 }
@@ -288,8 +359,52 @@ export function getEmployeeByUserId(userId: string) {
   return db.employees.find((employee) => employee.userId === userId) ?? null;
 }
 
-export function getLinkedEmployeeId(user: SessionUser) {
+export function getLinkedEmployeeId(user: Pick<SessionUser, "id">) {
   return getEmployeeByUserId(user.id)?.id;
+}
+
+export function getEmployeeAccessRole(employee: Pick<Employee, "userId"> & Partial<Pick<Employee, "jobTitle" | "roleName" | "specialty">>) {
+  const userRole = employee.userId ? db.users.find((user) => user.id === employee.userId)?.role : null;
+  if (userRole) return userRole;
+
+  const roleText = `${employee.jobTitle ?? ""} ${employee.roleName ?? ""} ${employee.specialty ?? ""}`.toLowerCase();
+  if (roleText.includes("supervisor")) return "SUPERVISOR_OBRA";
+  if (roleText.includes("gerente")) return "GERENTE";
+  if (roleText.includes("almox")) return "ALMOXARIFADO";
+  return "COLABORADOR";
+}
+
+export function getVisibleEmployeesForUser(user: SessionUser) {
+  return db.employees.filter((employee) => canViewEmployeeProfileByRole(user.role, getEmployeeAccessRole(employee)));
+}
+
+export function isOpenServiceOrderForTeam(status: ServiceOrder["status"]) {
+  return !["DONE", "DELIVERED", "CANCELED"].includes(status);
+}
+
+export function isEmployeeAssignedToServiceOrder(order: Pick<ServiceOrder, "id" | "employeeIds" | "supervisorEmployeeId">, employeeId?: string) {
+  if (!employeeId) return false;
+  return (
+    order.supervisorEmployeeId === employeeId ||
+    (order.employeeIds ?? []).includes(employeeId) ||
+    db.serviceOrderEmployees.some((link) => link.serviceOrderId === order.id && link.employeeId === employeeId)
+  );
+}
+
+export function findEmployeeActiveServiceOrderConflict(employeeId: string, currentServiceOrderId?: string, period?: Pick<ServiceOrder, "scheduledStart" | "scheduledEnd">) {
+  const target = period ?? db.serviceOrders.find((order) => order.id === currentServiceOrderId);
+  return (
+    db.serviceOrders.find((order) => {
+      if (order.id === currentServiceOrderId || !isOpenServiceOrderForTeam(order.status)) return false;
+      if (target && !(Date.parse(order.scheduledStart) < Date.parse(target.scheduledEnd) && Date.parse(order.scheduledEnd) > Date.parse(target.scheduledStart))) return false;
+      return isEmployeeAssignedToServiceOrder(order, employeeId);
+    }) ?? null
+  );
+}
+
+export function hasAssignedServiceOrders(user: SessionUser) {
+  const linkedEmployeeId = getLinkedEmployeeId(user);
+  return db.serviceOrders.some((order) => isEmployeeAssignedToServiceOrder(order, linkedEmployeeId));
 }
 
 function isWarehouseRelevantServiceOrder(order: ServiceOrder) {
@@ -314,37 +429,51 @@ export function getAccessibleServiceOrders(user: SessionUser) {
   const linkedEmployeeId = getLinkedEmployeeId(user);
   if (canViewWarehouseServiceOrders(user.role)) {
     return db.serviceOrders
-      .filter((order) => isWarehouseRelevantServiceOrder(order))
-      .map((order) => sanitizeServiceOrderForRole(user.role, order));
+      .filter((order) => isWarehouseRelevantServiceOrder(order) || isEmployeeAssignedToServiceOrder(order, linkedEmployeeId))
+      .map((order) => sanitizeServiceOrderForRole(user, order));
   }
   if (canViewFinancialServiceOrders(user.role)) {
-    return db.serviceOrders.map((order) => sanitizeServiceOrderForRole(user.role, order));
+    return db.serviceOrders.map((order) => sanitizeServiceOrderForRole(user, order));
   }
   if (user.role === "SUPERVISOR_OBRA") {
     return db.serviceOrders
       .filter((order) => canAccessServiceOrderByAssignment(user.role, user.id, order, linkedEmployeeId))
-      .map((order) => sanitizeServiceOrderForRole(user.role, order));
+      .map((order) => sanitizeServiceOrderForRole(user, order));
   }
   if (user.role === "COLABORADOR") {
     return db.serviceOrders
       .filter((order) => {
         if (!linkedEmployeeId) return false;
-        return (
-          db.serviceOrderEmployees.some((link) => link.serviceOrderId === order.id && link.employeeId === linkedEmployeeId) ||
-          order.employeeIds.includes(linkedEmployeeId)
-        );
+        return isEmployeeAssignedToServiceOrder(order, linkedEmployeeId);
       })
-      .map((order) => sanitizeServiceOrderForRole(user.role, order));
+      .map((order) => sanitizeServiceOrderForRole(user, order));
   }
   return db.serviceOrders
     .filter((order) => canAccessServiceOrderByAssignment(user.role, user.id, order, linkedEmployeeId))
-    .map((order) => sanitizeServiceOrderForRole(user.role, order));
+    .map((order) => sanitizeServiceOrderForRole(user, order));
 }
 
-export function sanitizeServiceOrderForRole(role: UserRole, order: ServiceOrder): ServiceOrder {
-  if (role === "ALMOXARIFADO") {
+export function sanitizeServiceOrderForRole(subject: UserRole | Pick<SessionUser, "id" | "role" | "canViewFinancials">, order: ServiceOrder): ServiceOrder {
+  const role = typeof subject === "string" ? subject : subject.role;
+  const canShareClientTracking = role === "OWNER" || role === "GERENTE" || role === "SUPERVISOR_OBRA";
+  const isAssignedWarehouseUser =
+    role === "ALMOXARIFADO" &&
+    typeof subject !== "string" &&
+    isEmployeeAssignedToServiceOrder(order, getLinkedEmployeeId(subject));
+  const scopedOrder = canAccessAllServiceOrders(role)
+    ? order
+    : {
+        ...order,
+        internalNotes: "",
+        clientDeliveryIp: undefined,
+        clientDeliverySignatureUrl: undefined,
+        clientAccessCode: canShareClientTracking ? order.clientAccessCode : undefined,
+        clientAccessEnabled: canShareClientTracking ? order.clientAccessEnabled : undefined,
+      };
+
+  if (role === "ALMOXARIFADO" && !isAssignedWarehouseUser) {
     return {
-      ...order,
+      ...scopedOrder,
       description: "",
       internalNotes: "",
       clientNotes: "",
@@ -357,7 +486,7 @@ export function sanitizeServiceOrderForRole(role: UserRole, order: ServiceOrder)
 
   if (role === "FINANCEIRO") {
     return {
-      ...order,
+      ...scopedOrder,
       description: "",
       internalNotes: "",
       clientNotes: "",
@@ -366,27 +495,26 @@ export function sanitizeServiceOrderForRole(role: UserRole, order: ServiceOrder)
     };
   }
 
-  if (!canViewServiceOrderFinancials(role)) {
+  if (!canViewServiceOrderFinancials(subject)) {
     return {
-      ...order,
+      ...scopedOrder,
       revenue: 0,
       expenses: 0,
     };
   }
 
-  return order;
+  return scopedOrder;
 }
 
 export function canUserAccessOrder(user: SessionUser, order: ServiceOrder) {
-  if (canViewWarehouseServiceOrders(user.role)) return isWarehouseRelevantServiceOrder(order);
+  if (canViewWarehouseServiceOrders(user.role)) {
+    return isWarehouseRelevantServiceOrder(order) || isEmployeeAssignedToServiceOrder(order, getLinkedEmployeeId(user));
+  }
   if (canViewFinancialServiceOrders(user.role)) return true;
   if (user.role === "COLABORADOR") {
     const linkedEmployeeId = getLinkedEmployeeId(user);
     if (!linkedEmployeeId) return false;
-    return (
-      db.serviceOrderEmployees.some((link) => link.serviceOrderId === order.id && link.employeeId === linkedEmployeeId) ||
-      order.employeeIds.includes(linkedEmployeeId)
-    );
+    return isEmployeeAssignedToServiceOrder(order, linkedEmployeeId);
   }
   if (user.role === "SUPERVISOR_OBRA") {
     const linkedEmployeeId = getLinkedEmployeeId(user);
@@ -403,9 +531,9 @@ export function canUserAccessOrder(user: SessionUser, order: ServiceOrder) {
 
 export function canUserAccessEmployee(user: SessionUser, employeeId: string) {
   if (canAccessAllServiceOrders(user.role)) return true;
-  const linkedEmployeeId = getLinkedEmployeeId(user);
-  if (linkedEmployeeId === employeeId) return true;
-  return getAccessibleServiceOrders(user).some((order) => order.employeeIds.includes(employeeId));
+  const employee = db.employees.find((item) => item.id === employeeId);
+  if (!employee) return false;
+  return canViewEmployeeProfileByRole(user.role, getEmployeeAccessRole(employee));
 }
 
 export function recordAuditLog(input: Omit<AuditLog, "id" | "createdAt">) {
@@ -421,24 +549,132 @@ export function recordAuditLog(input: Omit<AuditLog, "id" | "createdAt">) {
   return log;
 }
 
+export function createServiceExpense(
+  input: {
+    serviceOrderId: string;
+    employeeId: string;
+    category: ServiceExpenseCategory;
+    amount: number;
+    notes?: string;
+  },
+  actor: SessionUser,
+) {
+  const serviceOrder = db.serviceOrders.find((order) => order.id === input.serviceOrderId);
+  if (!serviceOrder) return { expense: null, serviceOrder: null, error: "ORDER_NOT_FOUND" as const };
+
+  const employee = db.employees.find((item) => item.id === input.employeeId);
+  if (!employee) return { expense: null, serviceOrder: null, error: "EMPLOYEE_NOT_FOUND" as const };
+
+  const amount = Math.round(input.amount * 100) / 100;
+  if (!Number.isFinite(amount) || amount <= 0) return { expense: null, serviceOrder: null, error: "INVALID_AMOUNT" as const };
+
+  const now = new Date().toISOString();
+  const oldValueJson = {
+    expenses: serviceOrder.expenses,
+    profit: serviceOrder.revenue - serviceOrder.expenses,
+  };
+  const expense: ServiceExpense = {
+    id: makeId("exp"),
+    serviceOrderId: serviceOrder.id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    category: input.category,
+    amount,
+    notes: input.notes?.trim() ?? "",
+    createdByUserId: actor.id,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  reconcileExpenseLedger(serviceOrder, db.serviceExpenses, actor.id);
+  db.serviceExpenses.unshift(expense);
+  serviceOrder.expenses = expenseTotal(serviceOrder.id, db.serviceExpenses);
+
+  recordAuditLog({
+    userId: actor.id,
+    action: "CREATE_SERVICE_EXPENSE",
+    entity: "ServiceExpense",
+    entityId: expense.id,
+    newValueJson: {
+      expense,
+      serviceOrderId: serviceOrder.id,
+      previousFinancials: oldValueJson,
+      nextFinancials: {
+        expenses: serviceOrder.expenses,
+        profit: serviceOrder.revenue - serviceOrder.expenses,
+      },
+    },
+  });
+
+  return { expense, serviceOrder, error: null };
+}
+
+export function toAnonymousCompanyFeedback(feedback: CompanyFeedback) {
+  const { submittedByUserId, ...anonymousFeedback } = feedback;
+  void submittedByUserId;
+  return anonymousFeedback;
+}
+
+export function toAnonymousCompanyFeedbacks(feedbacks = db.companyFeedbacks) {
+  return feedbacks.map((feedback) => toAnonymousCompanyFeedback(feedback));
+}
+
+export function createCompanyFeedback(input: { category: CompanyFeedbackCategory; message: string }, actor: SessionUser) {
+  const now = new Date().toISOString();
+  const feedback: CompanyFeedback = {
+    id: makeId("fbk"),
+    submittedByUserId: actor.id,
+    category: input.category,
+    message: input.message.trim(),
+    status: "NEW",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.companyFeedbacks.unshift(feedback);
+  recordAuditLog({
+    userId: actor.id,
+    action: "CREATE_COMPANY_FEEDBACK",
+    entity: "CompanyFeedback",
+    entityId: feedback.id,
+    newValueJson: feedback,
+  });
+
+  return feedback;
+}
+
 export function createSystemUser(input: {
   name: string;
-  email: string;
+  email?: string;
+  phone?: string;
   role: UserRole;
   isActive?: boolean;
   linkedEmployeeId?: string;
   temporaryPassword?: string;
+  canViewFinancials?: boolean;
 }) {
-  const email = normalizeEmail(input.email);
+  const phone = normalizePhone(input.phone);
+  const email = input.email?.trim() ? normalizeEmail(input.email) : phone ? makeInternalEmailFromPhone(phone) : "";
+  if (!email) return { user: null, error: "LOGIN_REQUIRED" as const };
   if (findUserByEmail(email)) return { user: null, error: "EMAIL_EXISTS" as const };
+  if (phone && findUserByPhone(phone)) return { user: null, error: "PHONE_EXISTS" as const };
 
+  if (input.linkedEmployeeId) {
+    const linked = db.employees.find((item) => item.id === input.linkedEmployeeId);
+    if (!linked || linked.userId) return { user: null, error: "INVALID_EMPLOYEE_LINK" as const };
+  }
   const user: SystemUser = {
     id: makeId("usr"),
     name: input.name,
     email,
-    passwordHash: bcrypt.hashSync(input.temporaryPassword ?? "123456", 10),
+    phone,
+    passwordHash: bcrypt.hashSync(newPasswordSchema.parse(input.temporaryPassword), 12),
+    sessionVersion: 0,
+    mustChangePassword: true,
     role: input.role,
     isActive: input.isActive ?? true,
+    canViewFinancials:
+      input.role === "OWNER" || input.role === "FINANCEIRO" || (input.role === "GERENTE" && Boolean(input.canViewFinancials)),
     linkedEmployeeId: input.linkedEmployeeId,
     lastLoginAt: undefined,
     createdAt: new Date().toISOString(),
@@ -448,8 +684,12 @@ export function createSystemUser(input: {
   db.users.unshift(user);
 
   if (input.linkedEmployeeId) {
+    for (const previous of db.employees) if (previous.userId === user.id && previous.id !== input.linkedEmployeeId) previous.userId = undefined;
     const employee = db.employees.find((item) => item.id === input.linkedEmployeeId);
-    if (employee) employee.userId = user.id;
+    if (employee) {
+      employee.userId = user.id;
+      if (phone && !employee.phone) employee.phone = phone;
+    }
   }
 
   queueDatabasePersist();
@@ -476,13 +716,15 @@ export async function changeEmployeeAccessPassword(
 
   if (!isSelf && !canResetByRole) return { user: null, error: "FORBIDDEN" as const };
 
-  if (isSelf && !canResetByRole) {
+  if (isSelf) {
     if (!input.currentPassword) return { user: null, error: "CURRENT_PASSWORD_REQUIRED" as const };
     const validCurrentPassword = user.passwordHash ? await bcrypt.compare(input.currentPassword, user.passwordHash) : false;
     if (!validCurrentPassword) return { user: null, error: "INVALID_CURRENT_PASSWORD" as const };
   }
 
-  user.passwordHash = await bcrypt.hash(input.newPassword, 10);
+  user.passwordHash = await bcrypt.hash(newPasswordSchema.parse(input.newPassword), 12);
+  user.sessionVersion = (user.sessionVersion ?? 0) + 1;
+  user.mustChangePassword = !isSelf;
   user.updatedAt = new Date().toISOString();
   recordAuditLog({
     userId: actor.id,
@@ -498,6 +740,30 @@ export async function changeEmployeeAccessPassword(
   return { user, error: null };
 }
 
+export async function changeOwnPassword(
+  userId: string,
+  input: { currentPassword: string; newPassword: string },
+) {
+  const user = db.users.find((item) => item.id === userId);
+  if (!user) return { user: null, error: "NOT_FOUND" as const };
+
+  const validCurrentPassword = user.passwordHash ? await bcrypt.compare(input.currentPassword, user.passwordHash) : false;
+  if (!validCurrentPassword) return { user: null, error: "INVALID_CURRENT_PASSWORD" as const };
+
+  user.passwordHash = await bcrypt.hash(newPasswordSchema.parse(input.newPassword), 12);
+  user.sessionVersion = (user.sessionVersion ?? 0) + 1;
+  user.mustChangePassword = false;
+  user.updatedAt = new Date().toISOString();
+  recordAuditLog({
+    userId,
+    action: "CHANGE_OWN_PASSWORD",
+    entity: "User",
+    entityId: user.id,
+  });
+
+  return { user, error: null };
+}
+
 export function changeUserRole(id: string, role: UserRole, actor: SessionUser) {
   const user = db.users.find((item) => item.id === id);
   if (!user) return null;
@@ -505,6 +771,8 @@ export function changeUserRole(id: string, role: UserRole, actor: SessionUser) {
 
   const oldValueJson = { role: user.role };
   user.role = role;
+  user.sessionVersion = (user.sessionVersion ?? 0) + 1;
+  user.canViewFinancials = role === "FINANCEIRO";
   user.updatedAt = new Date().toISOString();
   recordAuditLog({
     userId: actor.id,
@@ -514,6 +782,7 @@ export function changeUserRole(id: string, role: UserRole, actor: SessionUser) {
     oldValueJson,
     newValueJson: { role },
   });
+  queueDatabasePersist();
   return user;
 }
 
@@ -525,8 +794,10 @@ export function updateUserStatus(id: string, isActive: boolean, actor: SessionUs
     return { user: null, error: "PROTECTED_OWNER" as const };
   }
 
+  if (!canManageTargetUserRole(actor.role, user.role, user.role)) return { user: null, error: "FORBIDDEN" as const };
   const oldValueJson = { isActive: user.isActive };
   user.isActive = isActive;
+  user.sessionVersion = (user.sessionVersion ?? 0) + 1;
   user.updatedAt = new Date().toISOString();
   recordAuditLog({
     userId: actor.id,
@@ -537,12 +808,13 @@ export function updateUserStatus(id: string, isActive: boolean, actor: SessionUs
     newValueJson: { isActive },
   });
 
+  queueDatabasePersist();
   return { user, error: null };
 }
 
 export function updateSystemUser(
   id: string,
-  input: Partial<Pick<SystemUser, "name" | "email" | "role" | "isActive" | "linkedEmployeeId">>,
+  input: Partial<Pick<SystemUser, "name" | "email" | "phone" | "role" | "isActive" | "linkedEmployeeId" | "canViewFinancials">>,
   actor: SessionUser,
 ) {
   const user = db.users.find((item) => item.id === id);
@@ -555,18 +827,38 @@ export function updateSystemUser(
   if (input.role && !canManageTargetUserRole(actor.role, user.role, input.role)) {
     return { user: null, error: "FORBIDDEN_ROLE" as const };
   }
-  if (input.email && normalizeEmail(input.email) !== normalizeEmail(user.email) && findUserByEmail(input.email)) {
+  if (!canManageTargetUserRole(actor.role, user.role, input.role ?? user.role)) return { user: null, error: "FORBIDDEN_ROLE" as const };
+  if (input.canViewFinancials !== undefined && actor.role !== "OWNER") return { user: null, error: "FORBIDDEN_ROLE" as const };
+  if (input.linkedEmployeeId && input.linkedEmployeeId !== user.linkedEmployeeId) {
+    const linked = db.employees.find((item) => item.id === input.linkedEmployeeId);
+    if (!linked || linked.userId) return { user: null, error: "INVALID_EMPLOYEE_LINK" as const };
+  }
+  const requestedEmail = input.email?.trim();
+  if (requestedEmail && normalizeEmail(requestedEmail) !== normalizeEmail(user.email) && findUserByEmail(requestedEmail)) {
     return { user: null, error: "EMAIL_EXISTS" as const };
+  }
+  const nextPhone = input.phone !== undefined ? normalizePhone(input.phone) : undefined;
+  if (nextPhone && normalizePhone(user.phone) !== nextPhone && findUserByPhone(nextPhone)) {
+    return { user: null, error: "PHONE_EXISTS" as const };
   }
 
   const oldValueJson = { ...user };
   Object.assign(user, input, {
-    email: input.email ? normalizeEmail(input.email) : user.email,
+    email: requestedEmail ? normalizeEmail(requestedEmail) : user.email,
+    phone: nextPhone ?? user.phone,
     updatedAt: new Date().toISOString(),
   });
+  if (input.role || typeof input.canViewFinancials === "boolean") {
+    user.canViewFinancials =
+      user.role === "FINANCEIRO" || (user.role === "GERENTE" && Boolean(input.canViewFinancials));
+  }
   if (input.linkedEmployeeId) {
+    for (const previous of db.employees) if (previous.userId === user.id && previous.id !== input.linkedEmployeeId) previous.userId = undefined;
     const employee = db.employees.find((item) => item.id === input.linkedEmployeeId);
-    if (employee) employee.userId = user.id;
+    if (employee) {
+      employee.userId = user.id;
+      if (user.phone && !employee.phone) employee.phone = user.phone;
+    }
   }
 
   recordAuditLog({
@@ -578,6 +870,7 @@ export function updateSystemUser(
     newValueJson: user,
   });
 
+  queueDatabasePersist();
   return { user, error: null };
 }
 
@@ -586,6 +879,7 @@ export function createEmployee(
     createAccess?: boolean;
     accessRole?: UserRole;
     temporaryPassword?: string;
+    canViewFinancials?: boolean;
   },
   actor?: SessionUser,
 ) {
@@ -593,16 +887,20 @@ export function createEmployee(
   if (existingDocument) return { employee: null, user: null, error: "DOCUMENT_EXISTS" as const };
 
   const accessRole = input.accessRole ?? "COLABORADOR";
+  if (input.createAccess && (!actor || !canCreateUserWithRole(actor.role, accessRole) || (input.canViewFinancials && actor.role !== "OWNER"))) return { employee: null, user: null, error: "INVALID_ACCESS_ROLE" as const };
   if (input.createAccess && !["COLABORADOR", "SUPERVISOR_OBRA", "GERENTE", "ALMOXARIFADO"].includes(accessRole)) {
     return { employee: null, user: null, error: "INVALID_ACCESS_ROLE" as const };
   }
   if (input.createAccess && input.email && findUserByEmail(input.email)) {
     return { employee: null, user: null, error: "EMAIL_EXISTS" as const };
   }
+  if (input.createAccess && input.phone && findUserByPhone(input.phone)) {
+    return { employee: null, user: null, error: "PHONE_EXISTS" as const };
+  }
 
   const employee: Employee = {
-    id: `emp-${Date.now()}`,
-    userId: input.userId,
+    id: makeId("emp"),
+    userId: undefined,
     name: input.name ?? "Novo colaborador",
     phone: input.phone ?? "",
     email: input.email ?? "",
@@ -630,10 +928,12 @@ export function createEmployee(
   if (input.createAccess) {
     const result = createSystemUser({
       name: employee.name,
-      email: employee.email,
+      email: employee.email || undefined,
+      phone: employee.phone,
       role: accessRole,
       linkedEmployeeId: employee.id,
       temporaryPassword: input.temporaryPassword,
+      canViewFinancials: input.canViewFinancials,
     });
     if (result.error) {
       db.employees.splice(db.employees.findIndex((item) => item.id === employee.id), 1);
@@ -653,10 +953,15 @@ export function createEmployee(
     });
   }
 
+  queueDatabasePersist();
   return { employee, user: createdUser, error: null };
 }
 
-export function grantEmployeeAccess(employeeId: string, input: { email: string; role: UserRole; temporaryPassword?: string }, actor: SessionUser) {
+export function grantEmployeeAccess(
+  employeeId: string,
+  input: { email?: string; phone?: string; role: UserRole; temporaryPassword?: string; canViewFinancials?: boolean },
+  actor: SessionUser,
+) {
   const employee = db.employees.find((item) => item.id === employeeId);
   if (!employee) return { employee: null, user: null, error: "NOT_FOUND" as const };
   if (employee.userId) return { employee: null, user: null, error: "ALREADY_HAS_ACCESS" as const };
@@ -667,22 +972,27 @@ export function grantEmployeeAccess(employeeId: string, input: { email: string; 
   if (!canCreateUserWithRole(actor.role, input.role)) {
     return { employee: null, user: null, error: "INVALID_ACCESS_ROLE" as const };
   }
+  const phone = normalizePhone(input.phone || employee.phone);
   const result = createSystemUser({
     name: employee.name,
     email: input.email,
+    phone,
     role: input.role,
     linkedEmployeeId: employee.id,
     temporaryPassword: input.temporaryPassword,
+    canViewFinancials: input.canViewFinancials,
   });
   if (result.error) return { employee: null, user: null, error: result.error };
   employee.userId = result.user.id;
+  if (phone && !employee.phone) employee.phone = phone;
   recordAuditLog({
     userId: actor.id,
     action: "GRANT_EMPLOYEE_ACCESS",
     entity: "Employee",
     entityId: employee.id,
-    newValueJson: { userId: result.user.id, role: result.user.role, email: result.user.email },
+    newValueJson: { userId: result.user.id, role: result.user.role, email: result.user.email, phone: result.user.phone },
   });
+  queueDatabasePersist();
   return { employee, user: result.user, error: null };
 }
 
@@ -691,12 +1001,15 @@ export function promoteEmployeeToSupervisor(employeeId: string, actor: SessionUs
   if (!employee) return { employee: null, user: null, error: "NOT_FOUND" as const };
   if (employee.status === "FIRED") return { employee: null, user: null, error: "EMPLOYEE_NOT_ACTIVE" as const };
 
+  const targetUser = employee.userId ? db.users.find((item) => item.id === employee.userId) : undefined;
+  if (!canCreateUserWithRole(actor.role, "SUPERVISOR_OBRA") || (targetUser && !canManageTargetUserRole(actor.role, targetUser.role, "SUPERVISOR_OBRA"))) return { employee: null, user: null, error: "FORBIDDEN" as const };
   const oldValueJson = { employee: { ...employee }, user: employee.userId ? db.users.find((item) => item.id === employee.userId) : undefined };
   let user = employee.userId ? db.users.find((item) => item.id === employee.userId) : undefined;
   if (!user) {
     const result = createSystemUser({
       name: employee.name,
       email: input?.email || employee.email || `${employee.id}@empresa.com`,
+      phone: employee.phone,
       role: "SUPERVISOR_OBRA",
       linkedEmployeeId: employee.id,
       temporaryPassword: input?.temporaryPassword,
@@ -705,6 +1018,7 @@ export function promoteEmployeeToSupervisor(employeeId: string, actor: SessionUs
     user = result.user;
   } else {
     user.role = "SUPERVISOR_OBRA";
+    user.canViewFinancials = false;
     user.linkedEmployeeId = employee.id;
     user.updatedAt = new Date().toISOString();
   }
@@ -741,6 +1055,7 @@ export function promoteSupervisorToManager(employeeId: string, actor: SessionUse
 
   const oldValueJson = { employee: { ...employee }, user: { ...user } };
   user.role = "GERENTE";
+  user.canViewFinancials = false;
   user.linkedEmployeeId = employee.id;
   user.updatedAt = new Date().toISOString();
   employee.userId = user.id;
@@ -771,6 +1086,7 @@ export function removeSupervisorRole(employeeId: string, actor: SessionUser) {
 
   const oldValueJson = { employee: { ...employee }, user: { ...user } };
   user.role = "COLABORADOR";
+  user.canViewFinancials = false;
   user.updatedAt = new Date().toISOString();
   employee.roleName = "Colaborador";
   employee.jobTitle = employee.jobTitle === "Supervisor de obra" ? "Colaborador" : employee.jobTitle;
@@ -794,6 +1110,8 @@ export function assignSupervisorToServiceOrder(orderId: string, supervisorEmploy
   if (supervisor.status !== "ACTIVE" || supervisorUser?.role !== "SUPERVISOR_OBRA" || !supervisorUser.isActive) {
     return { serviceOrder: null, error: "INVALID_SUPERVISOR" as const };
   }
+  const conflict = findEmployeeActiveServiceOrderConflict(supervisorEmployeeId, orderId);
+  if (conflict) return { serviceOrder: null, error: "TEAM_CONFLICT" as const, conflict };
 
   const oldValueJson = {
     supervisorEmployeeId: order.supervisorEmployeeId,
@@ -945,6 +1263,7 @@ function getChecklistItem(orderId: string, itemId: string) {
 function getOrderTeamEmployeeIds(orderId: string) {
   const order = getOrderById(orderId);
   const ids = new Set(order?.employeeIds ?? []);
+  if (order?.supervisorEmployeeId) ids.add(order.supervisorEmployeeId);
   db.serviceOrderEmployees
     .filter((link) => link.serviceOrderId === orderId)
     .forEach((link) => ids.add(link.employeeId));
@@ -974,7 +1293,7 @@ function areActiveEmployeesInServiceOrder(orderId: string, employeeIds?: string[
 }
 
 function isServiceOrderClosed(order: ServiceOrder) {
-  return order.status === "DONE" || order.status === "DELIVERED" || order.status === "CANCELED";
+  return !isOpenServiceOrderForTeam(order.status);
 }
 
 function canActorDirectlyOperateAssignedItem(actor: SessionUser, item: ServiceOrderChecklistItem) {
@@ -994,17 +1313,21 @@ function validatePhotoInput(photo: {
   mimeType?: string;
   sizeBytes?: number;
 }) {
-  const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+  const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "video/mp4", "video/webm", "video/quicktime"]);
   const url = photo.url.trim();
   const fileName = photo.fileName?.trim() || url.split("/").pop() || "evidencia.jpg";
   const dataUrlMime = url.match(/^data:(image\/(?:jpeg|png|webp));base64,/i)?.[1]?.toLowerCase();
   const dataUrlOk = Boolean(dataUrlMime && url.length > `data:${dataUrlMime};base64,`.length);
-  const extensionOk = /\.(jpe?g|png|webp)$/i.test(fileName) || /\.(jpe?g|png|webp)$/i.test(url);
-  const localUrlOk = url.startsWith("/uploads/") || url.startsWith("/demo/");
+  const extensionOk = /\.(jpe?g|png|webp|heic|heif|mp4|webm|mov)$/i.test(fileName) || /\.(jpe?g|png|webp|heic|heif|mp4|webm|mov)(?:\?|$)/i.test(url);
+  const localUrlOk = url.startsWith("/api/checklist-media?");
   const localhostOk = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/uploads\//i.test(url);
+  const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+  const supabaseStorageOk = Boolean(supabaseUrl && url.startsWith(`${supabaseUrl}/storage/v1/object/public/`));
   const mimeOk = (!photo.mimeType || allowedMimeTypes.has(photo.mimeType)) && (!dataUrlMime || allowedMimeTypes.has(dataUrlMime));
-  const sizeOk = !photo.sizeBytes || photo.sizeBytes <= Number(process.env.CHECKLIST_MAX_PHOTO_BYTES ?? 6_000_000);
-  return (extensionOk || dataUrlOk) && (localUrlOk || localhostOk || dataUrlOk) && mimeOk && sizeOk;
+  const configuredMaxBytes = Number(process.env.CHECKLIST_MAX_MEDIA_BYTES ?? process.env.CHECKLIST_MAX_PHOTO_BYTES ?? 0);
+  const maxMediaBytes = Number.isFinite(configuredMaxBytes) && configuredMaxBytes > 0 ? Math.min(configuredMaxBytes, 200 * 1024 * 1024) : 20 * 1024 * 1024;
+  const sizeOk = !photo.sizeBytes || photo.sizeBytes <= maxMediaBytes;
+  return (extensionOk || dataUrlOk) && (localUrlOk || localhostOk || supabaseStorageOk || dataUrlOk) && mimeOk && sizeOk;
 }
 
 export function recordChecklistEvent(input: Omit<ServiceOrderChecklistEvent, "id" | "createdAt">) {
@@ -1320,6 +1643,7 @@ export function startChecklistItem(serviceOrderId: string, itemId: string, actor
     oldValueJson: { status: oldStatus },
     newValueJson: { status: item.status, startedAt: item.startedAt },
   });
+  queueDatabasePersist();
   return { item, error: null };
 }
 
@@ -1383,6 +1707,7 @@ export function completeChecklistItem(input: {
   serviceOrderId: string;
   itemId: string;
   completedByEmployeeId: string;
+  completedByEmployeeIds?: string[];
   completedByUserId: string;
   actor?: SessionUser;
   completionNotes?: string;
@@ -1400,13 +1725,22 @@ export function completeChecklistItem(input: {
   if (actor.role === "COLABORADOR" && item.startedByUserId && item.startedByUserId !== actor.id) {
     return { item: null, photos: [], error: "ITEM_ALREADY_STARTED" as const };
   }
+  const requestedCompletedEmployeeIds = uniqueEmployeeIds(
+    input.completedByEmployeeIds?.length ? input.completedByEmployeeIds : [input.completedByEmployeeId],
+  );
+  const linkedEmployeeId = actor.role === "COLABORADOR" ? getLinkedEmployeeId(actor) : undefined;
+  const primaryCompletedByEmployeeId =
+    actor.role === "COLABORADOR" && linkedEmployeeId
+      ? linkedEmployeeId
+      : input.completedByEmployeeId || requestedCompletedEmployeeIds[0];
+  const completedEmployeeIds = uniqueEmployeeIds([primaryCompletedByEmployeeId, ...requestedCompletedEmployeeIds]);
+
   if (actor.role === "COLABORADOR") {
-    const linkedEmployeeId = getLinkedEmployeeId(actor);
-    if (!canActorDirectlyOperateAssignedItem(actor, item) || input.completedByEmployeeId !== linkedEmployeeId) {
+    if (!linkedEmployeeId || !canActorDirectlyOperateAssignedItem(actor, item) || !completedEmployeeIds.includes(linkedEmployeeId)) {
       return { item: null, photos: [], error: "FORBIDDEN" as const };
     }
   }
-  if (!isActiveEmployeeInServiceOrder(input.serviceOrderId, input.completedByEmployeeId)) {
+  if (!primaryCompletedByEmployeeId || !areActiveEmployeesInServiceOrder(input.serviceOrderId, completedEmployeeIds)) {
     return { item: null, photos: [], error: "EMPLOYEE_NOT_IN_TEAM" as const };
   }
 
@@ -1422,7 +1756,8 @@ export function completeChecklistItem(input: {
 
   const oldValueJson = { ...item };
   item.status = "DONE";
-  item.completedByEmployeeId = input.completedByEmployeeId;
+  item.completedByEmployeeId = primaryCompletedByEmployeeId;
+  item.completedByEmployeeIds = completedEmployeeIds;
   item.completedByUserId = input.completedByUserId;
   item.completedAt = new Date().toISOString();
   item.completionNotes = input.completionNotes ?? input.notes ?? item.completionNotes;
@@ -1433,7 +1768,7 @@ export function completeChecklistItem(input: {
   incomingPhotos.forEach((photoInput) => {
     const photoResult = addChecklistPhoto(input.serviceOrderId, input.itemId, {
       ...photoInput,
-      employeeId: input.completedByEmployeeId,
+      employeeId: primaryCompletedByEmployeeId,
     }, actor);
     if (photoResult.photo) photos.push(photoResult.photo);
   });
@@ -1445,12 +1780,23 @@ export function completeChecklistItem(input: {
     checklistItemId: item.id,
     serviceOrderId: input.serviceOrderId,
     userId: input.completedByUserId,
-    employeeId: input.completedByEmployeeId,
+    employeeId: primaryCompletedByEmployeeId,
     type: "COMPLETED",
     message: item.completionNotes || "Item concluido.",
     previousStatus: oldValueJson.status,
     newStatus: item.status,
-    metadataJson: { progress: getChecklistProgress(input.serviceOrderId) },
+    metadataJson: {
+      serviceOrderId: order.id,
+      serviceOrderTitle: order.title,
+      customerName: order.customerName,
+      checklistItemId: item.id,
+      checklistItemTitle: item.title,
+      completedByEmployeeId: primaryCompletedByEmployeeId,
+      completedByEmployeeIds: completedEmployeeIds,
+      completedByUserId: input.completedByUserId,
+      completedAt: item.completedAt,
+      progress: getChecklistProgress(input.serviceOrderId),
+    },
   });
   recordAuditLog({
     userId: input.completedByUserId,
@@ -1458,7 +1804,7 @@ export function completeChecklistItem(input: {
     entity: "ServiceOrderChecklistItem",
     entityId: item.id,
     oldValueJson,
-    newValueJson: { status: item.status, completedByEmployeeId: input.completedByEmployeeId, photos: photos.length },
+    newValueJson: { status: item.status, completedByEmployeeId: primaryCompletedByEmployeeId, completedByEmployeeIds: completedEmployeeIds, photos: photos.length },
   });
 
   return { item, photos, error: null };
@@ -1860,6 +2206,7 @@ export function createSupervisorEvaluation(input: Omit<SupervisorEvaluation, "id
     entityId: evaluation.id,
     newValueJson: { serviceOrderId: evaluation.serviceOrderId, supervisorUserId: evaluation.supervisorUserId },
   });
+  queueDatabasePersist();
   return evaluation;
 }
 

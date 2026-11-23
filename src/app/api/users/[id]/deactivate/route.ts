@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canActivateTargetUser } from "@/lib/permissions";
-import { db, toPublicUser, updateUserStatus } from "@/lib/store";
+import { db, flushDatabasePersistence, toPublicUser, updateUserStatus } from "@/lib/store";
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -24,5 +25,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
   if (!result.user) return NextResponse.json({ message: "Nao foi possivel desativar usuario." }, { status: 400 });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({ message: "Usuario desativado com sucesso.", user: toPublicUser(result.user) });
 }
+
+export const POST = withDatabase(POSTHandler);

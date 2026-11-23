@@ -1,8 +1,9 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { AUTH_COOKIE, getCurrentUserFromRequest } from "@/lib/auth";
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const user = await getCurrentUserFromRequest(request);
 
   if (!user) {
@@ -19,3 +20,5 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ user });
 }
+
+export const GET = withDatabase(GETHandler);

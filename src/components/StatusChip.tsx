@@ -49,6 +49,8 @@ const toneByStatus: Record<string, ChipProps["color"]> = {
   UNAVAILABLE: "default",
   REJECTED: "error",
   CANCELED: "error",
+  VACATION: "info",
+  SUSPENDED: "error",
   FIRED: "error",
   INACTIVE: "default",
 };

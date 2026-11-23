@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
 import { db } from "@/lib/store";
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUserFromRequest(request);
   if (!user) return NextResponse.json({ message: "Nao autenticado." }, { status: 401 });
 
@@ -19,3 +20,5 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   }
   return NextResponse.json({ evaluations: db.evaluations.filter((item) => item.serviceOrderId === id) });
 }
+
+export const GET = withDatabase(GETHandler);

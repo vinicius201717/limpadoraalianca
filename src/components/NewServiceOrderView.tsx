@@ -23,7 +23,7 @@ import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 
 import { labelFor } from "@/lib/labels";
-import { canAccessAllServiceOrders } from "@/lib/permissions";
+import { canAccessAllServiceOrders, canViewServiceOrderFinancials } from "@/lib/permissions";
 import type { Employee, ServiceType } from "@/lib/types";
 import { useCurrentUser } from "./useCurrentUser";
 
@@ -81,6 +81,7 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
     { id: "checklist-1", title: "", description: "", isPriority: false, requiresPhoto: false },
   ]);
   const allowed = canAccessAllServiceOrders(user?.role ?? "COLABORADOR");
+  const canViewFinancials = canViewServiceOrderFinancials(user);
   const {
     register,
     control,
@@ -107,7 +108,7 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
   async function onSubmit(values: ServiceOrderForm) {
     setError("");
     const scheduledStart = toIsoDateTime(values.scheduledStart);
-    const scheduledEnd = values.scheduledEnd ? toIsoDateTime(values.scheduledEnd) : scheduledStart;
+    const scheduledEnd = values.scheduledEnd ? toIsoDateTime(values.scheduledEnd) : new Date(Date.parse(scheduledStart) + 3600000).toISOString();
 
     const response = await fetch("/api/service-orders", {
       method: "POST",
@@ -125,7 +126,7 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
         status: "SCHEDULED",
         supervisorEmployeeId: values.supervisorEmployeeId || undefined,
         clientNotes: values.clientNotes,
-        revenue: values.revenue,
+        revenue: canViewFinancials ? values.revenue : 0,
         expenses: 0,
         checklistItems: checklistDrafts
           .filter((item) => item.title.trim())
@@ -256,7 +257,13 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
                 helperText={errors.scheduledStart?.message}
               />
               <TextField label="Fim previsto" type="datetime-local" InputLabelProps={{ shrink: true }} {...register("scheduledEnd")} />
-              <TextField label="Valor fechado" type="number" {...register("revenue")} error={Boolean(errors.revenue)} helperText={errors.revenue?.message} />
+              {canViewFinancials ? (
+                <TextField label="Valor fechado" type="number" {...register("revenue")} error={Boolean(errors.revenue)} helperText={errors.revenue?.message} />
+              ) : (
+                <Alert severity="info" sx={{ alignItems: "center" }}>
+                  Valor financeiro restrito ao dono, financeiro e gerente autorizado.
+                </Alert>
+              )}
               <Controller
                 control={control}
                 name="supervisorEmployeeId"

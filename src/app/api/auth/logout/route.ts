@@ -1,8 +1,9 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE } from "@/lib/auth";
 
-export async function POST() {
+async function POSTHandler() {
   const response = NextResponse.json({ ok: true });
   response.cookies.set(AUTH_COOKIE, "", {
     httpOnly: true,
@@ -13,3 +14,5 @@ export async function POST() {
   });
   return response;
 }
+
+export const POST = withDatabase(POSTHandler);

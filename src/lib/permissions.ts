@@ -1,4 +1,15 @@
-import type { ServiceOrder, UserRole } from "./types";
+import type { ServiceOrder, SessionUser, UserRole } from "./types";
+
+type FinancialPermissionSubject = UserRole | Pick<SessionUser, "role" | "canViewFinancials"> | null | undefined;
+
+function getSubjectRole(subject: FinancialPermissionSubject): UserRole | null {
+  if (!subject) return null;
+  return typeof subject === "string" ? subject : subject.role;
+}
+
+function hasExplicitFinancialPermission(subject: FinancialPermissionSubject) {
+  return Boolean(subject && typeof subject !== "string" && subject.canViewFinancials);
+}
 
 export function isOwner(role: UserRole) {
   return role === "OWNER";
@@ -136,16 +147,33 @@ export function canEvaluateEmployee(role: UserRole) {
   return canEvaluateEmployees(role);
 }
 
+export function canAccessCollaboratorDirectory(role: UserRole) {
+  return role === "OWNER" || role === "GERENTE" || role === "SUPERVISOR_OBRA" || role === "COLABORADOR";
+}
+
+export function canViewEmployeeProfileByRole(viewerRole: UserRole, targetRole?: UserRole | null) {
+  if (viewerRole === "OWNER" || viewerRole === "GERENTE") return true;
+  if (viewerRole === "SUPERVISOR_OBRA") return targetRole === "COLABORADOR";
+  if (viewerRole === "COLABORADOR") return targetRole === "SUPERVISOR_OBRA";
+  return false;
+}
+
+export function canEvaluateEmployeeProfileByRole(viewerRole: UserRole, targetRole?: UserRole | null) {
+  return canViewEmployeeProfileByRole(viewerRole, targetRole);
+}
+
 export function canEvaluateSupervisor(role: UserRole) {
   return role === "COLABORADOR";
 }
 
-export function canAccessFinance(role: UserRole) {
-  return role === "OWNER" || role === "GERENTE" || role === "FINANCEIRO";
+export function canAccessFinance(subject: FinancialPermissionSubject) {
+  return canViewServiceOrderFinancials(subject);
 }
 
-export function canViewServiceOrderFinancials(role: UserRole) {
-  return role === "OWNER" || role === "FINANCEIRO";
+export function canViewServiceOrderFinancials(subject: FinancialPermissionSubject) {
+  const role = getSubjectRole(subject);
+  if (role === "OWNER" || role === "FINANCEIRO") return true;
+  return role === "GERENTE" && hasExplicitFinancialPermission(subject);
 }
 
 export function canManageSettings(role: UserRole) {
@@ -153,6 +181,10 @@ export function canManageSettings(role: UserRole) {
 }
 
 export function canAccessOperationalReports(role: UserRole) {
+  return role === "OWNER" || role === "GERENTE";
+}
+
+export function canViewCompanyFeedbacks(role: UserRole) {
   return role === "OWNER" || role === "GERENTE";
 }
 

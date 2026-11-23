@@ -31,6 +31,7 @@ export function ScheduleView({
   referenceTime: string;
 }) {
   const [view, setView] = useState(0);
+  const [selectedDate, setSelectedDate] = useState(referenceTime.slice(0, 10));
   const [query, setQuery] = useState("");
   const [type, setType] = useState("");
   const [status, setStatus] = useState("");
@@ -66,15 +67,22 @@ export function ScheduleView({
         (smartFilter === "checklist" && checklistPending) ||
         (smartFilter === "photos" && checklistPending);
 
-      return matchesQuery && matchesType && matchesStatus && matchesSupervisor && matchesSmart;
+      const start = new Date(`${selectedDate}T00:00:00-03:00`);
+      if (view === 1) start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+      if (view === 2) start.setUTCDate(1);
+      const end = new Date(start);
+      if (view === 2) end.setUTCMonth(end.getUTCMonth() + 1); else end.setUTCDate(end.getUTCDate() + (view === 1 ? 7 : 1));
+      const matchesPeriod = Date.parse(event.startsAt) < end.getTime() && Date.parse(event.endsAt || event.startsAt) >= start.getTime();
+      return matchesPeriod && matchesQuery && matchesType && matchesStatus && matchesSupervisor && matchesSmart;
     });
-  }, [query, referenceTime, scheduleEvents, serviceOrderChecklistItems, serviceOrderMaterials, serviceOrders, smartFilter, status, supervisor, type]);
+  }, [view, selectedDate, query, referenceTime, scheduleEvents, serviceOrderChecklistItems, serviceOrderMaterials, serviceOrders, smartFilter, status, supervisor, type]);
 
   const delayedCount = filteredEvents.filter((event) => event.status === "DELAYED").length;
   const materialPendingCount = serviceOrderMaterials.filter((item) => item.status === "PENDING_SEPARATION" || item.status === "SEPARATING").length;
 
   return (
     <Stack spacing={3}>
+      <TextField label="Data de referência" type="date" value={selectedDate} InputLabelProps={{ shrink: true }} onChange={(event) => setSelectedDate(event.target.value)} />
       <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2}>
         <Box>
           <Typography variant="h4" sx={{ fontSize: { xs: 28, md: 34 }, mb: 0.8 }}>

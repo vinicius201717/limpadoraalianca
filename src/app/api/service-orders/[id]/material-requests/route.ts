@@ -1,10 +1,12 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canPrepareServiceMaterials, canRequestServiceMaterials } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
-import { createMaterialRequest, db, queueDatabasePersist, recordAuditLog } from "@/lib/store";
+import { createMaterialRequest, db, flushDatabasePersistence, recordAuditLog } from "@/lib/store";
+import { InventoryError, isArchivedStockItem, moveMaterialRequest } from "@/lib/inventory-operations";
 
 const requestSchema = z.object({
   reason: z.string().min(3),
@@ -17,7 +19,7 @@ const requestPatchSchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "SEPARATED", "DELIVERED", "CANCELED"]),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -37,7 +39,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   return NextResponse.json({ requests });
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -59,6 +61,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ message: "Dados invalidos.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
+  const order = db.serviceOrders.find((item) => item.id === id);
+  if (!order || ["DONE", "DELIVERED", "CANCELED"].includes(order.status)) return NextResponse.json({ message: "OS encerrada nao recebe novas solicitacoes." }, { status: 409 });
+  if (parsed.data.items.some((item) => !db.materials.some((material) => material.id === item.materialId && !isArchivedStockItem(material)))) return NextResponse.json({ message: "Solicitacao contem material inexistente ou arquivado." }, { status: 400 });
+
   const result = createMaterialRequest({
     serviceOrderId: id,
     requestedByUserId: auth.user.id,
@@ -66,10 +72,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     priority: parsed.data.priority,
     items: parsed.data.items,
   });
+  await flushDatabasePersistence();
   return NextResponse.json(result, { status: 201 });
 }
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function PATCHHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -95,17 +102,26 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (!materialRequest) return NextResponse.json({ message: "Solicitacao nao encontrada." }, { status: 404 });
 
   const oldValueJson = { ...materialRequest };
-  materialRequest.status = parsed.data.status;
-  materialRequest.updatedAt = new Date().toISOString();
+  let allocations;
+  try {
+    allocations = moveMaterialRequest(db, materialRequest, parsed.data.status, auth.user.id);
+  } catch (error) {
+    if (error instanceof InventoryError) return NextResponse.json({ message: error.message }, { status: 409 });
+    throw error;
+  }
   recordAuditLog({
     userId: auth.user.id,
     action: "UPDATE_MATERIAL_REQUEST_STATUS",
     entity: "ServiceMaterialRequest",
     entityId: materialRequest.id,
     oldValueJson,
-    newValueJson: materialRequest,
+    newValueJson: { request: materialRequest, allocations },
   });
-  queueDatabasePersist();
+  await flushDatabasePersistence();
 
-  return NextResponse.json({ request: materialRequest });
+  return NextResponse.json({ request: materialRequest, allocations, materials: db.materials.filter((item) => allocations.some((allocation) => allocation.materialId === item.id)) });
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);
+export const PATCH = withDatabase(PATCHHandler);

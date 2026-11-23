@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canManageServiceOrderTeam } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
-import { db, recordAuditLog } from "@/lib/store";
+import { db, findEmployeeActiveServiceOrderConflict, flushDatabasePersistence, recordAuditLog, sanitizeServiceOrderForRole } from "@/lib/store";
 import type { ServiceOrderEmployee } from "@/lib/types";
 
 const teamSchema = z.object({
@@ -12,7 +13,7 @@ const teamSchema = z.object({
   roleInService: z.enum(["SUPERVISOR", "POLIDOR", "AUXILIAR", "TECNICO", "MOTORISTA", "ALMOXARIFADO", "OUTRO"]).optional(),
 });
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   return NextResponse.json({ employees });
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -51,6 +52,20 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const order = db.serviceOrders.find((item) => item.id === id);
   const employee = db.employees.find((item) => item.id === parsed.data.employeeId);
   if (!order || !employee) return NextResponse.json({ message: "OS ou colaborador nao encontrado." }, { status: 404 });
+  if (employee.status !== "ACTIVE") {
+    return NextResponse.json({ message: "Colaborador precisa estar ativo para entrar na equipe." }, { status: 400 });
+  }
+
+  const conflict = findEmployeeActiveServiceOrderConflict(employee.id, id);
+  if (conflict) {
+    return NextResponse.json(
+      {
+        message: `${employee.name} ja esta escalado em outra OS ativa: ${conflict.title}. Remova da outra equipe antes de adicionar aqui.`,
+        conflict: { serviceOrderId: conflict.id, title: conflict.title },
+      },
+      { status: 409 },
+    );
+  }
 
   if (!order.employeeIds.includes(employee.id)) order.employeeIds.push(employee.id);
   let link = db.serviceOrderEmployees.find((item) => item.serviceOrderId === id && item.employeeId === employee.id);
@@ -79,5 +94,86 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     newValueJson: link,
   });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({ employee: link }, { status: 201 });
 }
+
+async function DELETEHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const auth = await requireApiUser(request);
+  if (auth.response) return auth.response;
+
+  if (!canManageServiceOrderTeam(auth.user.role)) {
+    return NextResponse.json({ message: "Perfil sem permissao para remover colaborador da equipe." }, { status: 403 });
+  }
+
+  const { id } = await context.params;
+  const url = new URL(request.url);
+  let employeeId = url.searchParams.get("employeeId") ?? "";
+  if (!employeeId) {
+    const body = await request.json().catch(() => null);
+    employeeId = typeof body?.employeeId === "string" ? body.employeeId : "";
+  }
+  if (!employeeId) return NextResponse.json({ message: "Informe o colaborador a remover." }, { status: 400 });
+
+  const order = db.serviceOrders.find((item) => item.id === id);
+  const employee = db.employees.find((item) => item.id === employeeId);
+  if (!order || !employee) return NextResponse.json({ message: "OS ou colaborador nao encontrado." }, { status: 404 });
+
+  const oldValueJson = {
+    employeeIds: [...order.employeeIds],
+    supervisorEmployeeId: order.supervisorEmployeeId,
+    supervisorUserId: order.supervisorUserId,
+  };
+
+  order.employeeIds = order.employeeIds.filter((currentId) => currentId !== employeeId);
+  const removedLinks = db.serviceOrderEmployees.filter((link) => link.serviceOrderId === id && link.employeeId === employeeId);
+  for (let index = db.serviceOrderEmployees.length - 1; index >= 0; index -= 1) {
+    const link = db.serviceOrderEmployees[index];
+    if (link.serviceOrderId === id && link.employeeId === employeeId) {
+      db.serviceOrderEmployees.splice(index, 1);
+    }
+  }
+
+  if (order.supervisorEmployeeId === employeeId) {
+    order.supervisorEmployeeId = undefined;
+    order.supervisorUserId = undefined;
+  }
+
+  const updatedChecklistItems = db.serviceOrderChecklistItems
+    .filter((item) => item.serviceOrderId === id && (item.assignedEmployeeIds ?? []).includes(employeeId))
+    .map((item) => {
+      item.assignedEmployeeIds = (item.assignedEmployeeIds ?? []).filter((currentId) => currentId !== employeeId);
+      item.updatedAt = new Date().toISOString();
+      return item.id;
+    });
+
+  recordAuditLog({
+    userId: auth.user.id,
+    action: "REMOVE_SERVICE_ORDER_EMPLOYEE",
+    entity: "ServiceOrder",
+    entityId: order.id,
+    oldValueJson,
+    newValueJson: {
+      employeeId,
+      employeeName: employee.name,
+      employeeIds: order.employeeIds,
+      removedLinks,
+      updatedChecklistItems,
+      supervisorEmployeeId: order.supervisorEmployeeId,
+      supervisorUserId: order.supervisorUserId,
+    },
+  });
+
+  await flushDatabasePersistence();
+
+  return NextResponse.json({
+    message: "Colaborador removido da equipe.",
+    serviceOrder: sanitizeServiceOrderForRole(auth.user, order),
+    removedEmployeeId: employeeId,
+  });
+}
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);
+export const DELETE = withDatabase(DELETEHandler);

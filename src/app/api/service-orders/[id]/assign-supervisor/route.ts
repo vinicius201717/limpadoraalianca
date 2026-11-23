@@ -1,15 +1,16 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canAssignSupervisorToServiceOrder } from "@/lib/permissions";
-import { assignSupervisorToServiceOrder, removeSupervisorFromServiceOrder, sanitizeServiceOrderForRole } from "@/lib/store";
+import { assignSupervisorToServiceOrder, flushDatabasePersistence, removeSupervisorFromServiceOrder, sanitizeServiceOrderForRole } from "@/lib/store";
 
 const assignSupervisorSchema = z.object({
   supervisorEmployeeId: z.string(),
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -28,12 +29,23 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (result.error === "INVALID_SUPERVISOR") {
     return NextResponse.json({ message: "Supervisor precisa ser colaborador ativo com acesso SUPERVISOR_OBRA." }, { status: 400 });
   }
+  if (result.error === "TEAM_CONFLICT") {
+    return NextResponse.json(
+      {
+        message: `Este supervisor ja esta escalado em outra OS ativa: ${result.conflict.title}. Remova da outra equipe antes de adicionar aqui.`,
+        conflict: { serviceOrderId: result.conflict.id, title: result.conflict.title },
+      },
+      { status: 409 },
+    );
+  }
   if (!result.serviceOrder) return NextResponse.json({ message: "Nao foi possivel designar supervisor." }, { status: 400 });
 
-  return NextResponse.json({ message: "Supervisor designado para a obra.", serviceOrder: sanitizeServiceOrderForRole(auth.user.role, result.serviceOrder) });
+  await flushDatabasePersistence();
+
+  return NextResponse.json({ message: "Supervisor designado para a obra.", serviceOrder: sanitizeServiceOrderForRole(auth.user, result.serviceOrder) });
 }
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function DELETEHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -46,5 +58,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   if (result.error === "NOT_FOUND") return NextResponse.json({ message: "OS nao encontrada." }, { status: 404 });
   if (!result.serviceOrder) return NextResponse.json({ message: "Nao foi possivel remover supervisor." }, { status: 400 });
 
-  return NextResponse.json({ message: "Supervisor removido da obra.", serviceOrder: sanitizeServiceOrderForRole(auth.user.role, result.serviceOrder) });
+  await flushDatabasePersistence();
+
+  return NextResponse.json({ message: "Supervisor removido da obra.", serviceOrder: sanitizeServiceOrderForRole(auth.user, result.serviceOrder) });
 }
+
+export const POST = withDatabase(POSTHandler);
+export const DELETE = withDatabase(DELETEHandler);

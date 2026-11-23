@@ -1,10 +1,11 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canUserAccessOrder, getChecklistItemHistory } from "@/lib/store";
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
+async function GETHandler(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id, itemId } = await context.params;
@@ -15,3 +16,5 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   }
   return NextResponse.json({ events: getChecklistItemHistory(id, itemId) });
 }
+
+export const GET = withDatabase(GETHandler);

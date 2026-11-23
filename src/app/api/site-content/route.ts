@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -38,7 +39,7 @@ const testimonialSchema = z.object({
 
 const siteContentSchema = z.discriminatedUnion("type", [beforeAfterSchema, testimonialSchema]);
 
-export async function GET() {
+async function GETHandler() {
   await ensureDatabaseReady();
   return NextResponse.json({
     beforeAfters: db.siteBeforeAfters.filter((item) => item.isPublished),
@@ -46,7 +47,7 @@ export async function GET() {
   });
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   await ensureDatabaseReady();
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
@@ -70,3 +71,6 @@ export async function POST(request: NextRequest) {
   void type;
   return NextResponse.json({ testimonial: createSiteTestimonial(data, auth.user) }, { status: 201 });
 }
+
+export const GET = withDatabase(GETHandler);
+export const POST = withDatabase(POSTHandler);

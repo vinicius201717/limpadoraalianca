@@ -1,17 +1,20 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { newPasswordSchema } from "@/lib/password-policy";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canCreateUserWithRole, canManageEmployeeUserAccess } from "@/lib/permissions";
-import { grantEmployeeAccess, toPublicUser } from "@/lib/store";
+import { flushDatabasePersistence, grantEmployeeAccess, toPublicUser } from "@/lib/store";
 
 const grantAccessSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email().optional().or(z.literal("")),
+  phone: z.string().min(8).optional().or(z.literal("")),
   role: z.enum(["COLABORADOR", "SUPERVISOR_OBRA", "GERENTE", "ALMOXARIFADO"]).default("COLABORADOR"),
-  temporaryPassword: z.string().min(6).optional(),
+  temporaryPassword: newPasswordSchema,
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -34,6 +37,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ message: "Colaborador ja possui acesso ao sistema." }, { status: 409 });
   }
   if (result.error === "EMAIL_EXISTS") return NextResponse.json({ message: "E-mail ja cadastrado." }, { status: 409 });
+  if (result.error === "PHONE_EXISTS") return NextResponse.json({ message: "Telefone ja cadastrado." }, { status: 409 });
+  if (result.error === "LOGIN_REQUIRED") return NextResponse.json({ message: "Informe telefone para criar acesso." }, { status: 400 });
   if (result.error === "EMPLOYEE_NOT_ACTIVE") {
     return NextResponse.json({ message: "Somente colaborador ativo pode receber acesso." }, { status: 400 });
   }
@@ -42,9 +47,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
   if (!result.employee || !result.user) return NextResponse.json({ message: "Nao foi possivel criar acesso." }, { status: 400 });
 
+  await flushDatabasePersistence();
+
   return NextResponse.json({
     message: "Acesso criado com sucesso.",
     employee: result.employee,
     user: toPublicUser(result.user),
   }, { status: 201 });
 }
+
+export const POST = withDatabase(POSTHandler);

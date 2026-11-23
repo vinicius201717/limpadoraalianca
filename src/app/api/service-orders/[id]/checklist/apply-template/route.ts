@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -10,7 +11,7 @@ const applyTemplateSchema = z.object({
   templateId: z.string(),
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -29,3 +30,5 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (result.error === "EMPTY_TEMPLATE") return NextResponse.json({ message: "Template sem itens." }, { status: 400 });
   return NextResponse.json({ items: result.items, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

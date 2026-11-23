@@ -1,24 +1,24 @@
+import { getOperationalPageData } from "@/lib/operational-page-data";
 import { notFound } from "next/navigation";
 
 import { WarehouseServiceView } from "@/components/WarehouseServiceView";
-import { db, ensureDatabaseReady } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default async function WarehouseServicePage({ params }: { params: Promise<{ id: string }> }) {
-  await ensureDatabaseReady();
+  const { data } = await getOperationalPageData({ stock: true });
   const { id } = await params;
-  const order = db.serviceOrders.find((item) => item.id === id);
+  const order = data.serviceOrders.find((item) => item.id === id);
   if (!order) notFound();
   return (
     <WarehouseServiceView
-      equipment={db.equipment}
-      materialRequestItems={db.materialRequestItems}
-      materialRequests={db.materialRequests}
-      materials={db.materials}
+      equipment={data.equipment}
+      materialRequestItems={data.materialRequestItems}
+      materialRequests={data.materialRequests.filter((item) => item.serviceOrderId === id)}
+      materials={data.materials}
       order={order}
-      serviceOrderEquipment={db.serviceOrderEquipment}
-      serviceOrderMaterials={db.serviceOrderMaterials}
+      serviceOrderEquipment={data.serviceOrderEquipment.filter((item) => item.serviceOrderId === id)}
+      serviceOrderMaterials={data.serviceOrderMaterials.filter((item) => item.serviceOrderId === id)}
     />
   );
 }

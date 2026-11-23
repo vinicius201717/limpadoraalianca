@@ -20,8 +20,10 @@ enum UserRole {
 
 enum EmployeeStatus {
   ACTIVE
-  INACTIVE
+  VACATION
   ON_LEAVE
+  SUSPENDED
+  INACTIVE
   FIRED
 }
 

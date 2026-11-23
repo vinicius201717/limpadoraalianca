@@ -1,3 +1,4 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -17,7 +18,7 @@ const supervisorEvaluationSchema = z.object({
   improvementNotes: z.string().optional(),
 });
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
 
@@ -70,3 +71,5 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
   return NextResponse.json({ evaluation }, { status: 201 });
 }
+
+export const POST = withDatabase(POSTHandler);

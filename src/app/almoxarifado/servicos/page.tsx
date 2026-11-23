@@ -1,19 +1,20 @@
+import { getOperationalPageData } from "@/lib/operational-page-data";
 import { WarehouseView } from "@/components/WarehouseView";
-import { db, ensureDatabaseReady } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default async function WarehouseServicesPage() {
-  await ensureDatabaseReady();
+  const { data } = await getOperationalPageData({ stock: true });
   return (
     <WarehouseView
-      equipment={db.equipment}
-      materialRequestItems={db.materialRequestItems}
-      materialRequests={db.materialRequests}
-      materials={db.materials}
-      serviceOrderEquipment={db.serviceOrderEquipment}
-      serviceOrderMaterials={db.serviceOrderMaterials}
-      serviceOrders={db.serviceOrders}
+      employees={data.employees}
+      equipment={data.equipment}
+      materialRequestItems={data.materialRequestItems}
+      materialRequests={data.materialRequests}
+      materials={data.materials}
+      serviceOrderEquipment={data.serviceOrderEquipment}
+      serviceOrderMaterials={data.serviceOrderMaterials}
+      serviceOrders={data.serviceOrders}
     />
   );
 }

@@ -1,11 +1,12 @@
+import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { canManageChecklistForOrder, getOrderAndChecklistItem } from "@/lib/checklist-access";
 import { requireApiUser } from "@/lib/api-handlers";
 import { canOperateChecklist } from "@/lib/permissions";
-import { getChecklistForServiceOrder, unblockChecklistItem } from "@/lib/store";
+import { flushDatabasePersistence, getChecklistForServiceOrder, unblockChecklistItem } from "@/lib/store";
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
+async function POSTHandler(request: NextRequest, context: { params: Promise<{ id: string; itemId: string }> }) {
   const auth = await requireApiUser(request);
   if (auth.response) return auth.response;
   const { id, itemId } = await context.params;
@@ -16,5 +17,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
   const result = unblockChecklistItem(id, itemId, auth.user);
   if (result.error === "NOT_BLOCKED") return NextResponse.json({ message: "Item nao esta bloqueado." }, { status: 400 });
+  await flushDatabasePersistence();
   return NextResponse.json({ item: result.item, progress: getChecklistForServiceOrder(id).progress });
 }
+
+export const POST = withDatabase(POSTHandler);

@@ -1,6 +1,3 @@
-import { ModuleScreen } from "@/components/ModuleScreen";
-import { getModuleConfig } from "@/lib/module-config";
-
-export default function QuotesPage() {
-  return <ModuleScreen config={getModuleConfig("orcamentos")} />;
-}
+import { CommercialPage } from "@/components/CommercialPage";
+export const dynamic = "force-dynamic";
+export default function Page() { return <CommercialPage module="orcamentos" />; }

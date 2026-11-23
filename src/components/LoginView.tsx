@@ -17,15 +17,11 @@ import {
 import LoginRoundedIcon from "@mui/icons-material/LoginRounded";
 
 const loginSchema = z.object({
-  email: z.string().email("Informe um e-mail valido"),
+  login: z.string().min(8, "Informe o telefone com DDD"),
   password: z.string().min(6, "Senha com pelo menos 6 caracteres"),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
-
-const quickAccounts = [
-  { label: "Dono", email: "dono@empresa.com" },
-];
 
 export function LoginView() {
   const router = useRouter();
@@ -33,11 +29,10 @@ export function LoginView() {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: "dono@empresa.com", password: "123456" },
+    defaultValues: { login: "", password: "" },
   });
 
   async function onSubmit(values: LoginForm) {
@@ -49,12 +44,13 @@ export function LoginView() {
       body: JSON.stringify(values),
     });
 
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
-      setError("E-mail ou senha invalidos.");
+      setError(data?.message ?? "Não foi possível entrar. Tente novamente.");
       return;
     }
 
-    router.push("/dashboard");
+    router.push(data.user?.mustChangePassword ? "/configuracoes" : "/dashboard");
     router.refresh();
   }
 
@@ -123,12 +119,14 @@ export function LoginView() {
 
             <Stack component="form" spacing={2} onSubmit={handleSubmit(onSubmit)}>
               <TextField
-                label="E-mail"
-                type="email"
-                autoComplete="email"
-                {...register("email")}
-                error={Boolean(errors.email)}
-                helperText={errors.email?.message}
+                label="Telefone"
+                type="tel"
+                autoComplete="tel"
+                inputMode="tel"
+                placeholder="62999999999"
+                {...register("login")}
+                error={Boolean(errors.login)}
+                helperText={errors.login?.message}
               />
               <TextField
                 label="Senha"
@@ -143,21 +141,6 @@ export function LoginView() {
               </Button>
             </Stack>
 
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              {quickAccounts.map((account) => (
-                <Button
-                  key={account.email}
-                  size="small"
-                  variant="outlined"
-                  onClick={() => {
-                    setValue("email", account.email, { shouldValidate: true });
-                    setValue("password", "123456", { shouldValidate: true });
-                  }}
-                >
-                  {account.label}
-                </Button>
-              ))}
-            </Stack>
           </Stack>
         </Paper>
       </Box>

@@ -11,10 +11,10 @@ import SecurityRoundedIcon from "@mui/icons-material/SecurityRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import TimelineRoundedIcon from "@mui/icons-material/TimelineRounded";
 
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { labelFor } from "@/lib/labels";
-import { canEvaluateEmployees, canManageEmployeeUserAccess } from "@/lib/permissions";
-import type { Employee, Evaluation, ServiceOrder } from "@/lib/types";
+import { canEditEmployee, canEvaluateEmployeeProfileByRole, canManageEmployeeUserAccess, canViewServiceOrderFinancials } from "@/lib/permissions";
+import type { Employee, EmployeeStatus, Evaluation, ServiceOrder, ServiceOrderChecklistEvent, ServiceOrderChecklistItem, SupervisorEvaluation, UserRole } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
 import { useCurrentUser } from "./useCurrentUser";
 
@@ -41,6 +41,15 @@ type EvaluationScoreKey =
   | "clientPostureScore"
   | "checklistComplianceScore";
 
+type SupervisorEvaluationScoreKey =
+  | "clarityScore"
+  | "organizationScore"
+  | "respectScore"
+  | "taskDistributionScore"
+  | "communicationScore"
+  | "supportScore"
+  | "leadershipScore";
+
 const evaluationScoreFields: Array<{ key: EvaluationScoreKey; label: string }> = [
   { key: "punctualityScore", label: "Pontualidade" },
   { key: "qualityScore", label: "Qualidade tecnica" },
@@ -50,6 +59,28 @@ const evaluationScoreFields: Array<{ key: EvaluationScoreKey; label: string }> =
   { key: "clientPostureScore", label: "Postura com o cliente" },
   { key: "checklistComplianceScore", label: "Cumprimento do checklist" },
 ];
+
+const supervisorCriteria: Array<{ label: string; getScore: (evaluation: SupervisorEvaluation) => number }> = [
+  { label: "Clareza na orientacao", getScore: (evaluation) => evaluation.clarityScore },
+  { label: "Organizacao da equipe", getScore: (evaluation) => evaluation.organizationScore },
+  { label: "Respeito no trato", getScore: (evaluation) => evaluation.respectScore },
+  { label: "Distribuicao de tarefas", getScore: (evaluation) => evaluation.taskDistributionScore },
+  { label: "Comunicacao", getScore: (evaluation) => evaluation.communicationScore },
+  { label: "Apoio durante o servico", getScore: (evaluation) => evaluation.supportScore },
+  { label: "Lideranca", getScore: (evaluation) => evaluation.leadershipScore },
+];
+
+const supervisorEvaluationScoreFields: Array<{ key: SupervisorEvaluationScoreKey; label: string }> = [
+  { key: "clarityScore", label: "Clareza na orientacao" },
+  { key: "organizationScore", label: "Organizacao" },
+  { key: "respectScore", label: "Respeito" },
+  { key: "taskDistributionScore", label: "Distribuicao de tarefas" },
+  { key: "communicationScore", label: "Comunicacao" },
+  { key: "supportScore", label: "Apoio" },
+  { key: "leadershipScore", label: "Lideranca" },
+];
+
+const employeeStatusOptions: EmployeeStatus[] = ["ACTIVE", "VACATION", "ON_LEAVE", "SUSPENDED", "INACTIVE", "FIRED"];
 
 const defaultScores: Record<EvaluationScoreKey, number> = {
   punctualityScore: 5,
@@ -61,17 +92,55 @@ const defaultScores: Record<EvaluationScoreKey, number> = {
   checklistComplianceScore: 5,
 };
 
+const defaultSupervisorScores: Record<SupervisorEvaluationScoreKey, number> = {
+  clarityScore: 5,
+  organizationScore: 5,
+  respectScore: 5,
+  taskDistributionScore: 5,
+  communicationScore: 5,
+  supportScore: 5,
+  leadershipScore: 5,
+};
+
 function average(values: number[]) {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { employee: Employee; evaluations: Evaluation[]; serviceOrders: ServiceOrder[] }) {
+export function EmployeeDetailView({
+  employee,
+  targetAccessRole,
+  evaluations,
+  supervisorEvaluations = [],
+  serviceOrders,
+  checklistEvents = [],
+  checklistItems = [],
+}: {
+  employee: Employee;
+  targetAccessRole?: UserRole | null;
+  evaluations: Evaluation[];
+  supervisorEvaluations?: SupervisorEvaluation[];
+  serviceOrders: ServiceOrder[];
+  checklistEvents?: ServiceOrderChecklistEvent[];
+  checklistItems?: ServiceOrderChecklistItem[];
+}) {
   const { user } = useCurrentUser();
   const [localEvaluations, setLocalEvaluations] = useState(evaluations);
-  const employeeOrders = serviceOrders.filter((order) => order.employeeIds.includes(employee.id));
+  const [localSupervisorEvaluations, setLocalSupervisorEvaluations] = useState(supervisorEvaluations);
+  const [employeeStatus, setEmployeeStatus] = useState<EmployeeStatus>(employee.status);
+  const [statusInput, setStatusInput] = useState<EmployeeStatus>(employee.status);
+  const [statusError, setStatusError] = useState("");
+  const [statusNotice, setStatusNotice] = useState("");
+  const [statusBusy, setStatusBusy] = useState(false);
+  const employeeOrders = serviceOrders.filter((order) => order.employeeIds.includes(employee.id) || order.supervisorEmployeeId === employee.id);
+  const orderById = new Map(serviceOrders.map((order) => [order.id, order]));
+  const checklistItemById = new Map(checklistItems.map((item) => [item.id, item]));
+  const completedChecklistEvents = checklistEvents
+    .filter((event) => event.type === "COMPLETED" && event.employeeId === employee.id)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const [selectedServiceOrderId, setSelectedServiceOrderId] = useState(employeeOrders[0]?.id ?? "");
   const [scores, setScores] = useState<Record<EvaluationScoreKey, number>>(defaultScores);
+  const [supervisorScores, setSupervisorScores] = useState<Record<SupervisorEvaluationScoreKey, number>>(defaultSupervisorScores);
   const [positiveNotes, setPositiveNotes] = useState("");
   const [improvementNotes, setImprovementNotes] = useState("");
   const [seriousIssue, setSeriousIssue] = useState(false);
@@ -84,33 +153,87 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
   const [passwordError, setPasswordError] = useState("");
   const [passwordNotice, setPasswordNotice] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
-  const canEvaluate = canEvaluateEmployees(user?.role ?? "COLABORADOR");
+  const canEvaluate = Boolean(user && canEvaluateEmployeeProfileByRole(user.role, targetAccessRole));
+  const usesSupervisorEvaluationFlow = Boolean(user?.role === "COLABORADOR" && targetAccessRole === "SUPERVISOR_OBRA");
+  const canEditStatus = canEditEmployee(user?.role ?? "COLABORADOR");
   const canManagePassword = canManageEmployeeUserAccess(user?.role ?? "COLABORADOR");
+  const canViewFinancials = canViewServiceOrderFinancials(user);
   const isOwnAccessProfile = Boolean(user?.id && employee.userId === user.id);
   const canChangePassword = Boolean(employee.userId && (canManagePassword || isOwnAccessProfile));
-  const requiresCurrentPassword = isOwnAccessProfile && !canManagePassword;
+  const requiresCurrentPassword = isOwnAccessProfile;
   const employeeEvaluations = localEvaluations
     .filter((evaluation) => evaluation.employeeId === employee.id)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const calculatedAverage = average(employeeEvaluations.map((evaluation) => evaluation.overallScore));
-  const currentAverage = calculatedAverage || employee.averageRating;
-  const lastEvaluationAt = employeeEvaluations[0]?.createdAt ?? employee.lastEvaluationAt;
+  const targetSupervisorEvaluations = localSupervisorEvaluations
+    .filter((evaluation) => evaluation.supervisorEmployeeId === employee.id)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const calculatedAverage =
+    targetAccessRole === "SUPERVISOR_OBRA"
+      ? average(targetSupervisorEvaluations.map((evaluation) => evaluation.overallScore))
+      : average(employeeEvaluations.map((evaluation) => evaluation.overallScore));
+  const currentAverage = calculatedAverage || employee.supervisorAverageRating || employee.averageRating;
+  const lastEvaluationAt =
+    targetAccessRole === "SUPERVISOR_OBRA"
+      ? targetSupervisorEvaluations[0]?.createdAt ?? employee.lastEvaluationAt
+      : employeeEvaluations[0]?.createdAt ?? employee.lastEvaluationAt;
   const hasEvaluationSignal = employeeEvaluations.length > 0 || employee.averageRating > 0 || Boolean(employee.lastEvaluationAt) || employee.serviceOrdersCount > 0;
   const needsTraining = Boolean(employee.needsTraining || (hasEvaluationSignal && currentAverage < 3.8));
   const completedOrders = employeeOrders.filter((order) => order.status === "DONE" || order.status === "DELIVERED").length;
   const estimatedGeneratedRevenue = employeeOrders.reduce((sum, order) => sum + order.revenue / Math.max(order.employeeIds.length, 1), 0);
+  const evaluationTargetLabel = targetAccessRole === "SUPERVISOR_OBRA" ? "supervisor" : "colaborador";
 
-  const criteriaScores = criteria.map((item) => {
-    const evaluatedAverage = average(employeeEvaluations.map(item.getScore));
-    const fallbackValue = employee.criteriaAverages?.[item.fallbackKey] ?? employee.averageRating;
-    return { label: item.label, value: Number((evaluatedAverage || fallbackValue).toFixed(1)) };
-  });
+  const criteriaScores =
+    targetAccessRole === "SUPERVISOR_OBRA"
+      ? supervisorCriteria.map((item) => {
+          const evaluatedAverage = average(targetSupervisorEvaluations.map(item.getScore));
+          const fallbackValue = employee.supervisorAverageRating ?? employee.averageRating;
+          return { label: item.label, value: Number((evaluatedAverage || fallbackValue).toFixed(1)) };
+        })
+      : criteria.map((item) => {
+          const evaluatedAverage = average(employeeEvaluations.map(item.getScore));
+          const fallbackValue = employee.criteriaAverages?.[item.fallbackKey] ?? employee.averageRating;
+          return { label: item.label, value: Number((evaluatedAverage || fallbackValue).toFixed(1)) };
+        });
+  const timelineEvaluations =
+    targetAccessRole === "SUPERVISOR_OBRA"
+      ? targetSupervisorEvaluations.map((evaluation) => ({
+          id: evaluation.id,
+          createdAt: evaluation.createdAt,
+          overallScore: evaluation.overallScore,
+          positiveNotes: evaluation.positiveNotes,
+          improvementNotes: evaluation.improvementNotes,
+          needsTraining: false,
+        }))
+      : employeeEvaluations;
 
   async function submitEvaluation() {
     setEvaluationError("");
     setEvaluationNotice("");
     if (!selectedServiceOrderId) {
       setEvaluationError("Selecione uma OS para vincular a avaliacao.");
+      return;
+    }
+
+    if (usesSupervisorEvaluationFlow) {
+      const response = await fetch(`/api/service-orders/${selectedServiceOrderId}/evaluate-supervisor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...supervisorScores,
+          positiveNotes,
+          improvementNotes,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        setEvaluationError(data?.message ?? "Nao foi possivel registrar a avaliacao.");
+        return;
+      }
+
+      setLocalSupervisorEvaluations((current) => [data.evaluation, ...current]);
+      setEvaluationNotice(`Avaliacao registrada com media ${data.evaluation.overallScore.toFixed(1)}.`);
+      setPositiveNotes("");
+      setImprovementNotes("");
       return;
     }
 
@@ -150,8 +273,8 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
       setPasswordError("Perfil sem permissao para alterar esta senha.");
       return;
     }
-    if (newPassword.length < 6) {
-      setPasswordError("A nova senha deve ter pelo menos 6 caracteres.");
+    if (newPassword.length < 10) {
+      setPasswordError("A nova senha deve ter pelo menos 10 caracteres.");
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -182,6 +305,33 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
     setPasswordNotice("Senha atualizada com sucesso.");
   }
 
+  async function submitStatusChange() {
+    setStatusError("");
+    setStatusNotice("");
+    setStatusBusy(true);
+    const response = await fetch(`/api/employees/${employee.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: statusInput }),
+    });
+    const data = await response.json().catch(() => null);
+    setStatusBusy(false);
+
+    if (response.status === 403) {
+      setStatusError("Voce nao possui permissao para alterar status deste colaborador.");
+      return;
+    }
+    if (!response.ok) {
+      setStatusError(data?.message ?? "Nao foi possivel atualizar o status.");
+      return;
+    }
+
+    const updatedEmployee = data.employee as Employee;
+    setEmployeeStatus(updatedEmployee.status);
+    setStatusInput(updatedEmployee.status);
+    setStatusNotice(`Status atualizado para ${labelFor(updatedEmployee.status)}.`);
+  }
+
   return (
     <Stack spacing={3}>
       <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ md: "center" }} gap={2}>
@@ -196,6 +346,7 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
               </Typography>
               {employee.averageRating >= 4.8 && <Chip color="success" label="Alto desempenho" size="small" />}
               {needsTraining && <Chip color="warning" icon={<SchoolRoundedIcon />} label="Treinamento" size="small" />}
+              <StatusChip value={employeeStatus} />
             </Stack>
             <Typography color="text.secondary" noWrap>
               {employee.roleName} - {employee.specialty}
@@ -215,9 +366,14 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
 
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(4, minmax(0, 1fr))" }, gap: 2 }}>
         <Kpi label="Media geral" value={currentAverage.toFixed(1)} helper="Nota consolidada" icon={<StarRoundedIcon />} />
-        <Kpi label="Obras realizadas" value={String(employee.serviceOrdersCount)} helper={`${completedOrders} finalizadas na base`} icon={<AssignmentTurnedInRoundedIcon />} />
+        <Kpi label="Obras realizadas" value={String(employee.serviceOrdersCount)} helper={`${completedOrders} finalizadas, ${completedChecklistEvents.length} itens concluidos`} icon={<AssignmentTurnedInRoundedIcon />} />
         <Kpi label="Ultima avaliacao" value={lastEvaluationAt ? formatDate(lastEvaluationAt) : "Sem data"} helper="Acompanhamento da lideranca" icon={<TimelineRoundedIcon />} />
-        <Kpi label="Receita atribuida" value={formatCurrency(estimatedGeneratedRevenue)} helper="Rateio demonstrativo por equipe" icon={<StarRoundedIcon />} />
+        <Kpi
+          label="Receita atribuida"
+          value={canViewFinancials ? formatCurrency(estimatedGeneratedRevenue) : "Restrito"}
+          helper={canViewFinancials ? "Rateio demonstrativo por equipe" : "Visivel apenas para financeiro autorizado"}
+          icon={<StarRoundedIcon />}
+        />
       </Box>
 
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
@@ -290,18 +446,18 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
         <Stack spacing={2}>
           <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5}>
             <Box>
-              <Typography variant="h6">Avaliar colaborador</Typography>
+              <Typography variant="h6">Avaliar {evaluationTargetLabel}</Typography>
               <Typography variant="body2" color="text.secondary">
-                Registre a avaliacao operacional vinculada a uma OS em que o colaborador participou.
+                Registre a avaliacao operacional vinculada a uma OS compartilhada com este {evaluationTargetLabel}.
               </Typography>
             </Box>
             <Chip color={canEvaluate ? "primary" : "warning"} label={canEvaluate ? "Permitido para seu perfil" : "Sem permissao"} variant="outlined" />
           </Stack>
           {evaluationNotice && <Alert severity="success">{evaluationNotice}</Alert>}
           {evaluationError && <Alert severity="warning">{evaluationError}</Alert>}
-          {!canEvaluate && <Alert severity="info">Apenas OWNER, GERENTE e SUPERVISOR_OBRA podem avaliar colaboradores.</Alert>}
+          {!canEvaluate && <Alert severity="info">Seu perfil nao possui permissao para avaliar este {evaluationTargetLabel}.</Alert>}
           {employeeOrders.length === 0 ? (
-            <Alert severity="info">Este colaborador ainda nao esta vinculado a nenhuma OS. Vincule o colaborador a um servico antes de avaliar.</Alert>
+            <Alert severity="info">Nao ha OS compartilhada disponivel para avaliar este {evaluationTargetLabel}.</Alert>
           ) : (
             <Stack spacing={2}>
               <TextField
@@ -318,21 +474,37 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
                 ))}
               </TextField>
               <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 1.5 }}>
-                {evaluationScoreFields.map((field) => (
-                  <TextField
-                    key={field.key}
-                    select
-                    label={field.label}
-                    value={scores[field.key]}
-                    onChange={(event) => setScores((current) => ({ ...current, [field.key]: Number(event.target.value) }))}
-                  >
-                    {[1, 2, 3, 4, 5].map((score) => (
-                      <MenuItem key={score} value={score}>
-                        {score}
-                      </MenuItem>
+                {usesSupervisorEvaluationFlow
+                  ? supervisorEvaluationScoreFields.map((field) => (
+                      <TextField
+                        key={field.key}
+                        select
+                        label={field.label}
+                        value={supervisorScores[field.key]}
+                        onChange={(event) => setSupervisorScores((current) => ({ ...current, [field.key]: Number(event.target.value) }))}
+                      >
+                        {[1, 2, 3, 4, 5].map((score) => (
+                          <MenuItem key={score} value={score}>
+                            {score}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+                    ))
+                  : evaluationScoreFields.map((field) => (
+                      <TextField
+                        key={field.key}
+                        select
+                        label={field.label}
+                        value={scores[field.key]}
+                        onChange={(event) => setScores((current) => ({ ...current, [field.key]: Number(event.target.value) }))}
+                      >
+                        {[1, 2, 3, 4, 5].map((score) => (
+                          <MenuItem key={score} value={score}>
+                            {score}
+                          </MenuItem>
+                        ))}
+                      </TextField>
                     ))}
-                  </TextField>
-                ))}
               </Box>
               <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 1.5 }}>
                 <TextField label="Pontos positivos" value={positiveNotes} onChange={(event) => setPositiveNotes(event.target.value)} multiline minRows={3} />
@@ -357,9 +529,42 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
           <Stack spacing={2}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="h6">Dados principais</Typography>
-              <StatusChip value={employee.status} />
+              <StatusChip value={employeeStatus} />
             </Stack>
             <Divider />
+            {statusNotice && <Alert severity="success">{statusNotice}</Alert>}
+            {statusError && <Alert severity="warning">{statusError}</Alert>}
+            <Box sx={{ p: 1.6, borderRadius: 2, bgcolor: "background.default", border: 1, borderColor: "divider" }}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.3} alignItems={{ sm: "center" }}>
+                <TextField
+                  select
+                  label="Atualizar status"
+                  value={statusInput}
+                  onChange={(event) => setStatusInput(event.target.value as EmployeeStatus)}
+                  disabled={!canEditStatus || statusBusy}
+                  size="small"
+                  sx={{ minWidth: { xs: "100%", sm: 220 } }}
+                >
+                  {employeeStatusOptions.map((option) => (
+                    <MenuItem key={option} value={option}>
+                      {labelFor(option)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <Button
+                  variant="contained"
+                  onClick={submitStatusChange}
+                  disabled={!canEditStatus || statusBusy || statusInput === employeeStatus}
+                >
+                  {statusBusy ? "Atualizando..." : "Salvar status"}
+                </Button>
+                {!canEditStatus && (
+                  <Typography variant="body2" color="text.secondary">
+                    Somente OWNER e GERENTE podem alterar status.
+                  </Typography>
+                )}
+              </Stack>
+            </Box>
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2 }}>
               <Info label="Telefone" value={employee.phone} />
               <Info label="E-mail" value={employee.email} />
@@ -377,7 +582,7 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
             <Box>
               <Typography variant="h6">Media por criterio</Typography>
               <Typography variant="body2" color="text.secondary">
-                Leitura objetiva do padrao operacional do colaborador.
+                Leitura objetiva do padrao operacional do {evaluationTargetLabel}.
               </Typography>
             </Box>
             {criteriaScores.map((item) => (
@@ -427,6 +632,48 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
         </Paper>
 
         <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={1} sx={{ mb: 2 }}>
+            <Box>
+              <Typography variant="h6">Historico de checklist</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Itens finalizados por este colaborador.
+              </Typography>
+            </Box>
+            <Chip color="success" variant="outlined" label={`${completedChecklistEvents.length} concluidos`} />
+          </Stack>
+          {completedChecklistEvents.length === 0 ? (
+            <Alert severity="info">Ainda nao ha item de checklist concluido por este colaborador.</Alert>
+          ) : (
+            <Stack spacing={1.3}>
+              {completedChecklistEvents.slice(0, 10).map((event) => {
+                const order = orderById.get(event.serviceOrderId);
+                const checklistItem = checklistItemById.get(event.checklistItemId);
+                return (
+                  <Box key={event.id} sx={{ p: 1.6, borderRadius: 2, bgcolor: "background.default", border: 1, borderColor: "divider" }}>
+                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" gap={1}>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography fontWeight={900} sx={{ wordBreak: "break-word" }}>
+                          {checklistItem?.title ?? "Item de checklist"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {order?.title ?? "OS"} - {order?.customerName ?? "Cliente"}
+                        </Typography>
+                        {event.message && (
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+                            {event.message}
+                          </Typography>
+                        )}
+                      </Box>
+                      <Chip size="small" color="success" label={formatDateTime(event.createdAt)} />
+                    </Stack>
+                  </Box>
+                );
+              })}
+            </Stack>
+          )}
+        </Paper>
+
+        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2 }}>
           <Typography variant="h6" sx={{ mb: 2 }}>
             Desenvolvimento
           </Typography>
@@ -437,10 +684,10 @@ export function EmployeeDetailView({ employee, evaluations, serviceOrders }: { e
             <Typography variant="subtitle1" fontWeight={900}>
               Linha do tempo de avaliacoes
             </Typography>
-            {employeeEvaluations.length === 0 ? (
-              <Typography color="text.secondary">Ainda nao ha avaliacao registrada para este colaborador.</Typography>
+            {timelineEvaluations.length === 0 ? (
+              <Typography color="text.secondary">Ainda nao ha avaliacao registrada para este {evaluationTargetLabel}.</Typography>
             ) : (
-              employeeEvaluations.map((evaluation) => (
+              timelineEvaluations.map((evaluation) => (
                 <Box key={evaluation.id} sx={{ pl: 2, borderLeft: 3, borderColor: evaluation.needsTraining ? "warning.main" : "success.main" }}>
                   <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                     <Typography fontWeight={900}>{formatDate(evaluation.createdAt)}</Typography>

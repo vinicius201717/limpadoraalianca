@@ -2,12 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { AUTH_COOKIE, verifySessionPayload } from "./lib/session-token";
 
-const publicPaths = ["/login"];
+const publicPaths = ["/login", "/acompanhe-servico"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get(AUTH_COOKIE)?.value;
-  const hasValidSession = Boolean(verifySessionPayload(token));
+  const session = verifySessionPayload(token);
+  const hasValidSession = Boolean(session);
   const isPublic = publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
   if (!hasValidSession && pathname !== "/" && !isPublic) {
@@ -27,6 +28,9 @@ export function proxy(request: NextRequest) {
     return response;
   }
 
+  if (session?.mustChangePassword && pathname !== "/configuracoes" && pathname !== "/" && !pathname.startsWith("/acompanhe-servico")) {
+    return NextResponse.redirect(new URL("/configuracoes", request.url));
+  }
   if (hasValidSession && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
