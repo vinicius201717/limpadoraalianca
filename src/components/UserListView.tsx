@@ -183,9 +183,9 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
                   <TableCell>{row.createdAt ? formatDateTime(row.createdAt) : "-"}</TableCell>
                   <TableCell align="right">
                     <Stack direction="row" spacing={1} justifyContent="flex-end">
-                      <Button component={Link} href={`/usuarios/${encodeURIComponent(row.id)}#assistente-campo-perfil`} size="small" color="success" variant="outlined" startIcon={<MicRoundedIcon />}>
+                      {row.role !== "COLABORADOR" && <Button component={Link} href={`/usuarios/${encodeURIComponent(row.id)}#assistente-campo-perfil`} size="small" color="success" variant="outlined" startIcon={<MicRoundedIcon />}>
                         Campo
-                      </Button>
+                      </Button>}
                       {!isProtectedOwner && (
                         <Select
                           value={draftRole}

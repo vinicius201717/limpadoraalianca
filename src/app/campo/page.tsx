@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getCurrentUser } from "@/lib/auth";
+import { notFound } from "next/navigation";
 import { FieldAssistantView } from "@/components/FieldAssistantView";
 import { FieldLoginView } from "@/components/FieldLoginView";
 
@@ -14,5 +15,6 @@ export default async function FieldPage() {
   const user = await getCurrentUser();
   if (!user || !user.isActive) return <FieldLoginView />;
   if (user.mustChangePassword) return <FieldLoginView changePassword />;
+  if (user.role === "COLABORADOR") notFound();
   return <FieldAssistantView userName={user.name} />;
 }

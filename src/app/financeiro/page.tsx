@@ -1,5 +1,7 @@
 export const dynamic = "force-dynamic";
 import { notFound } from "next/navigation";
+import Link from "next/link";
+import { Box, Button } from "@mui/material";
 
 import { PaymentsView } from "@/components/PaymentsView";
 import { FinanceView } from "@/components/FinanceView";
@@ -11,7 +13,7 @@ export default async function FinancePage() {
   const user = await getCurrentUser();
   if (!user || !canViewServiceOrderFinancials(user)) notFound();
   return (
-    <><FinanceView
+    <><Box sx={{ mb: 2, display: "flex", justifyContent: "flex-end" }}><Button component={Link} href="/financeiro/comprovantes" color="success" variant="contained">Comprovantes recebidos pelo PWA</Button></Box><FinanceView
       initialOrders={getAccessibleServiceOrders(user)}
       employees={db.employees.filter((employee) => employee.status === "ACTIVE")}
       initialExpenses={db.serviceExpenses}

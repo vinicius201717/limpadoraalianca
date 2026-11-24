@@ -23,8 +23,9 @@ export const POST = withDatabase(async (request) => {
     const claim = verifyUploadTicket(input.ticket);
     if (claim.userId !== auth.user.id || claim.sessionVersion !== (auth.user.sessionVersion ?? 0) || !fieldOrders(auth.user).some((o) => o.id === claim.orderId))
       throw new FieldError("Anexo não pertence à sua conta ou obra.");
-    const previous = db.workHistory.find((entry) => entry.messageId === `campo:${auth.user.id}:${input.nonce}`);
+    const previous = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((entry) => entry.messageId === `campo:${auth.user.id}:${input.nonce}`);
     if (previous) return Response.json({ entry: previous });
+    if (claim.type === "document") throw new FieldError("Envie PDFs somente pela opção Comprovante.");
     await verifyUploadedMedia(claim);
     let analysis = ""; let analysisFailed = false;
     try {

@@ -19,7 +19,7 @@ export const POST = withDatabase(async (request) => {
   catch { return Response.json({ message: "Seu perfil não está designado a essa obra." }, { status: 403 }); }
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(nonce) || (sessionId && !/^[a-zA-Z0-9_-]{12,90}$/.test(sessionId)) || !(file instanceof File)) return Response.json({ message: "Gravação inválida." }, { status: 400 });
   const source = "campo:" + auth.user.id + ":" + nonce;
-  const previous = [...db.workHistory, ...db.warehouseJournal].find((entry) => entry.messageId === source);
+  const previous = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((entry) => entry.messageId === source);
   if (previous) return Response.json({ entry: previous, operation: { status: "diary", message: "Trecho já salvo, sem duplicar." } });
   const retry = await consumeRateLimit("field-audio", auth.user.id, 180, 60 * 60_000);
   if (retry) return Response.json({ message: "Limite de trechos de áudio atingido." }, { status: 429 });

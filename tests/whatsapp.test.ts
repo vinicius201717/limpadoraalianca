@@ -242,20 +242,22 @@ test("signature protects exact bytes and webhook ignores other business numbers"
   const value = (number: string) => ({ field: "messages", value: { metadata: { phone_number_id: number }, messages: [{ id: number, from: phone, timestamp: "123", type: "text", text: { body: "Oi" } }] } });
   assert.equal(parseWhatsAppMessages({ object: "whatsapp_business_account", entry: [{ changes: [value("other"), value("12345")] }] }).length, 1);
 });
-test("field assistant saves only to an authorized order and keeps each chunk idempotent", async () => {
+test("field assistant excludes collaborators, guards unauthorized orders, and keeps each chunk idempotent", async () => {
   await assistantTransaction(() => {
-    assert.deepEqual(fieldOrders(collaborator).map((order) => order.id), ["a"]);
-    assert.deepEqual(fieldOrders(owner).map((order) => order.id), ["a", "b"]);
-    assert.throws(() => appendFieldEntry({ user: collaborator, orderId: "b", nonce: "not-allowed-entry-1", title: "Teste", content: "Não deve salvar." }));
-    const input = { user: collaborator, orderId: "a", nonce: "field-nonce-000001", title: "Áudio transcrito", content: "Faltou material na sala.", transcript: "Faltou material na sala." };
+    assert.throws(() => fieldOrders(collaborator));
+    assert.deepEqual(fieldOrders(supervisor).map((order) => order.id), ["a"]);
+    assert.deepEqual(fieldOrders(owner).map((order) => order.id), ["a", "b", "office"]);
+    assert.throws(() => appendFieldEntry({ user: collaborator, orderId: "a", nonce: "denied-entry-000001", title: "Teste", content: "Não deve salvar." }));
+    assert.throws(() => appendFieldEntry({ user: supervisor, orderId: "b", nonce: "not-allowed-entry-1", title: "Teste", content: "Não deve salvar." }));
+    const input = { user: supervisor, orderId: "a", nonce: "field-nonce-000001", title: "Áudio transcrito", content: "Faltou material na sala.", transcript: "Faltou material na sala." };
     const one = appendFieldEntry(input);
     const same = appendFieldEntry(input);
     assert.equal(one.id, same.id);
     assert.equal(db.workHistory.length, 1);
-    assert.equal(db.workHistory[0].userId, collaborator.id);
+    assert.equal(db.workHistory[0].userId, supervisor.id);
     assert.equal(db.workHistory[0].serviceOrderId, "a");
-    assert.equal(fieldHistory(collaborator, "a")[0].content, "Faltou material na sala.");
-    assert.throws(() => fieldHistory(collaborator, "b"));
+    assert.equal(fieldHistory(supervisor, "a")[0].content, "Faltou material na sala.");
+    assert.throws(() => fieldHistory(supervisor, "b"));
   });
 });
 test("signed field upload tickets reject tampering and expiration", () => {
@@ -397,7 +399,7 @@ function setupWarehouse(assigned = true) {
   db.equipment.push({ id: "equipment-1", name: "Lavadora", code: "L-001", notes: "", status: "AVAILABLE" });
   return worker;
 }
-test("supervisor is locked to active supervisor assignment; cannot switch or spoof other works", async () => {
+test("supervisor uses the assigned work automatically, but can choose between two assigned active works", async () => {
   await assistantTransaction(() => {
     const assignment = fieldAssignment(supervisor);
     assert.equal(assignment.locked, true);
@@ -405,10 +407,13 @@ test("supervisor is locked to active supervisor assignment; cannot switch or spo
     assert.equal(assignment.orders.length, 1);
     assert.throws(() => authorizeFieldContext(supervisor, "b"));
     db.serviceOrders.find((order) => order.id === "b")!.supervisorUserId = supervisor.id;
-    const conflict = fieldAssignment(supervisor);
-    assert.equal(conflict.orderId, null);
-    assert.match(conflict.problem!, /mais de uma obra/);
-    assert.throws(() => authorizeFieldContext(supervisor, "a"));
+    const selection = fieldAssignment(supervisor);
+    assert.equal(selection.locked, false);
+    assert.equal(selection.orderId, null);
+    assert.deepEqual(selection.orders.map((o) => o.id).sort(), ["a", "b"]);
+    assert.doesNotThrow(() => authorizeFieldContext(supervisor, "a"));
+    assert.doesNotThrow(() => authorizeFieldContext(supervisor, "b"));
+    assert.throws(() => authorizeFieldContext(supervisor, "office"));
   });
 });
 test("a voice-created checklist item has the correct author, two responsible employees and linked diary event", async () => {
@@ -640,4 +645,169 @@ test("finalizing a nonexistent recording cannot fabricate or mutate the work dia
   const result = await POST(raw, undefined);
   assert.equal(result.status, 409);
   assert.equal(state().workHistory, undefined);
+});
+
+
+test("all operational profiles except collaborators can enter the PWA, with an administrative journal when needed", async () => {
+  await assistantTransaction(() => {
+    assert.ok(fieldAssignment(owner).orders.some((item) => item.id === "office"));
+    assert.ok(fieldAssignment(finance).orders.some((item) => item.id === "office"));
+    assert.ok(fieldAssignment(manager).orders.some((item) => item.id === "office"));
+    assert.doesNotThrow(() => authorizeFieldContext(finance, "office"));
+    assert.throws(() => fieldAssignment(collaborator));
+    assert.throws(() => authorizeFieldContext(collaborator, "a"));
+  });
+  const { GET } = await import("../src/app/api/campo/route");
+  const forbidden = await GET(request("/api/campo", collaborator), undefined);
+  assert.equal(forbidden.status, 403);
+  const permitted = await GET(request("/api/campo", finance), undefined);
+  assert.equal(permitted.status, 200);
+  const output = await permitted.json();
+  assert.equal(output.user.role, "FINANCEIRO");
+  assert.ok(output.orders.some((item: { id: string }) => item.id === "office"));
+});
+test("supervisor records absence and early departure only for assigned employees; incidents are non-punitive", async () => {
+  const absence = await runFieldCommand(supervisor, "a", "attendance-absence-001",
+    fieldCommand({ action: "REPORT_ABSENCE", employeeIds: ["worker"], occurredOn: "2026-11-22", details: "Ausência informada pelo encarregado." }),
+    "O Carlos faltou no dia 22 de novembro.");
+  assert.equal(absence.operation.status, "executed");
+  const early = await runFieldCommand(supervisor, "a", "attendance-early-0001",
+    fieldCommand({ action: "REPORT_EARLY_LEAVE", employeeIds: ["worker"], occurredOn: "2026-11-22",
+      occurredAt: "14:30", details: "Informou que precisava sair." }),
+    "O Carlos saiu mais cedo, às duas e meia.");
+  assert.equal(early.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.staffAttendanceReports.length, 2);
+    assert.equal(db.staffAttendanceReports[0].kind, "ABSENCE");
+    assert.equal(db.staffAttendanceReports[0].status, "REPORTED");
+    assert.equal(db.staffAttendanceReports[1].occurredAt, "14:30");
+    assert.equal(db.employeeWarnings.length, 0);
+    assert.equal(db.serviceExpenses.length, 0);
+    assert.equal(db.workHistory.length, 2);
+  });
+  await runFieldCommand(supervisor, "a", "attendance-absence-001",
+    fieldCommand({ action: "REPORT_ABSENCE", employeeIds: ["worker"], occurredOn: "2026-11-22" }));
+  await assistantTransaction(() => assert.equal(db.staffAttendanceReports.length, 2));
+  const foreign = await runFieldCommand(supervisor, "a", "attendance-wrong-team1",
+    fieldCommand({ action: "REPORT_ABSENCE", employeeIds: ["outsider"], occurredOn: "2026-11-22" }));
+  assert.equal(foreign.operation.status, "pending");
+  await assistantTransaction(() => assert.equal(db.staffAttendanceReports.length, 2));
+});
+test("finance-only profiles cannot file employee disciplinary incidents without team authority", async () => {
+  const outcome = await runFieldCommand(finance, "a", "attendance-finance-01",
+    fieldCommand({ action: "REPORT_ABSENCE", employeeIds: ["worker"], occurredOn: "2026-11-22" }));
+  assert.equal(outcome.operation.status, "pending");
+  await assistantTransaction(() => {
+    assert.equal(db.staffAttendanceReports.length, 0);
+    assert.equal(db.employeeWarnings.length, 0);
+  });
+});
+test("PDF receipts are accepted by signed field upload validation and stored as pending review without modifying ledger balances", async () => {
+  const { POST } = await import("../src/app/api/campo/comprovante/route");
+  const { validateMediaSize } = await import("../src/lib/field-storage");
+  assert.equal(validateMediaSize("application/pdf", 512).toString(), "document");
+  assert.throws(() => validateMediaSize("application/pdf", 16 * 1024 * 1024));
+  assert.throws(() => validateMediaSize("text/html", 80));
+  const payload = Buffer.from("%PDF-1.4 test");
+  const claim = {
+    path: "campo/11111111-1111-4111-8111-111111111111",
+    userId: supervisor.id, sessionVersion: 0, orderId: "a",
+    mimeType: "application/pdf", fileName: "recibo.pdf",
+    sizeBytes: payload.length, exp: Date.now() + 50000, type: "document",
+  };
+  const encoded = Buffer.from(JSON.stringify(claim)).toString("base64url");
+  const token = encoded + "." + createHmac("sha256", process.env.JWT_SECRET!).update(encoded).digest("base64url");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.origin === "https://fixture.invalid" && url.pathname.startsWith("/storage/v1/object/authenticated/")) {
+      return init?.method === "HEAD" ? new Response(null, { status: 200, headers: { "content-length": String(payload.length) } })
+        : new Response(new Uint8Array(payload), { status: 200 });
+    }
+    return previousFetch(input, init);
+  };
+  const requestReceipt = (nonce: string) => new NextRequest("http://localhost:3000/api/campo/comprovante", {
+    method: "POST", headers: { cookie: "floor_session=" + signSessionToken(supervisor), "content-type": "application/json" },
+    body: JSON.stringify({ ticket: token, nonce, description: "Compra de materiais de limpeza para a obra A." }),
+  });
+  const result = await POST(requestReceipt("receipt-nonce-001"), undefined);
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.receipt.status, "PENDING_REVIEW");
+  const duplicate = await POST(requestReceipt("receipt-nonce-002"), undefined);
+  assert.equal(duplicate.status, 200);
+  await assistantTransaction(() => {
+    assert.equal(db.fieldReceipts.length, 1);
+    assert.equal(db.fieldReceipts[0].description, "Compra de materiais de limpeza para a obra A.");
+    assert.equal(db.financialDocuments.length, 1);
+    assert.equal(db.financialDocuments[0].direction, "ARCHIVE");
+    assert.equal(db.serviceExpenses.length, 0);
+    assert.equal(db.serviceOrders.find((o) => o.id === "a")?.expenses, 0);
+    assert.ok(db.workHistory[0].attachment === undefined, "Financial file must not be exposed in ordinary work history");
+  });
+});
+test("receipt overview remains private to finance profiles, while employees may only see their own incident reports", async () => {
+  const { GET: overview } = await import("../src/app/api/finance/campo-comprovantes/route");
+  const denied = await overview(request("/api/finance/campo-comprovantes", supervisor), undefined);
+  assert.equal(denied.status, 403);
+  const permitted = await overview(request("/api/finance/campo-comprovantes", finance), undefined);
+  assert.equal(permitted.status, 200);
+  const { GET: incidents } = await import("../src/app/api/campo/ocorrencias/route");
+  const blocked = await incidents(request("/api/campo/ocorrencias", collaborator), undefined);
+  assert.equal(blocked.status, 403);
+});
+test("a user can dictate a description for their own receipt, but cannot silently describe another user's document", async () => {
+  await assistantTransaction(() => {
+    db.fieldReceipts.push({
+      id: "11111111-1111-4111-8111-111111111111",
+      serviceOrderId: "a", uploadedByUserId: supervisor.id, uploadedByName: supervisor.name,
+      description: "Comprovante enviado.", status: "PENDING_REVIEW", createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(), sourceMessageId: "campo:supervisor:receipt-old-doc01",
+      attachment: { id: "att-test-receipt", storagePath: "campo/22222222-2222-4222-8222-222222222222",
+        mimeType: "application/pdf", sizeBytes: 10, fileName: "nota.pdf" },
+    });
+  });
+  const result = await runFieldCommand(supervisor, "a", "receipt-description-01",
+    fieldCommand({ action: "DESCRIBE_RECEIPT", receiptId: "11111111-1111-4111-8111-111111111111",
+      details: "Descrevo: aquisição de dois galões para o acabamento." }), "Acrescente no meu comprovante que foi compra de dois galões.");
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => assert.match(db.fieldReceipts[0].description, /dois galões/));
+  const invalid = await runFieldCommand(manager, "a", "receipt-description-02",
+    fieldCommand({ action: "DESCRIBE_RECEIPT", receiptId: "11111111-1111-4111-8111-111111111111", details: "Alteração indevida." }));
+  assert.equal(invalid.operation.status, "pending");
+  await assistantTransaction(() => assert.ok(!db.fieldReceipts[0].description.includes("Alteração indevida")));
+});
+
+
+test("voice commands can change the UI theme without changing permissions or stock", async () => {
+  const result = await runFieldCommand(owner, "office", "theme-command-0001",
+    fieldCommand({ action: "SET_THEME", uiTheme: "light" }), "Mude para o tema claro.");
+  assert.equal(result.operation.status, "executed");
+  assert.equal(result.operation.ui?.kind, "THEME");
+  assert.equal(result.operation.ui?.value, "light");
+  await assistantTransaction(() => {
+    assert.equal(db.officeJournal.length, 1);
+    assert.equal(db.serviceExpenses.length, 0);
+  });
+});
+test("voice switching only targets active works assigned to the current supervisor", async () => {
+  await assistantTransaction(() => { db.serviceOrders.find((order) => order.id === "b")!.supervisorUserId = supervisor.id; });
+  const switched = await runFieldCommand(supervisor, "a", "select-assigned-0001",
+    fieldCommand({ action: "SWITCH_ORDER", targetOrderId: "b" }), "Troque para a obra B.");
+  assert.equal(switched.operation.ui?.kind, "ORDER");
+  assert.equal(switched.operation.ui?.value, "b");
+  const invalid = await runFieldCommand(supervisor, "a", "select-forbidden-001",
+    fieldCommand({ action: "SWITCH_ORDER", targetOrderId: "office" }));
+  assert.equal(invalid.operation.status, "pending");
+  assert.equal(invalid.operation.ui, undefined);
+});
+test("a voice report request is scoped to one work and cannot run in a general journal", async () => {
+  const requested = await runFieldCommand(supervisor, "a", "request-report-0001",
+    fieldCommand({ action: "REQUEST_REPORT" }), "Faça um relatório desta obra.");
+  assert.equal(requested.operation.ui?.kind, "REPORT");
+  assert.equal(requested.operation.ui?.value, "a");
+  const denied = await runFieldCommand(owner, "office", "request-report-0002",
+    fieldCommand({ action: "REQUEST_REPORT" }));
+  assert.equal(denied.operation.status, "pending");
+  await assistantTransaction(() => assert.equal(db.workReports.length, 0));
 });

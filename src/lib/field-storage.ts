@@ -7,7 +7,8 @@ const maxImage = 10 * 1024 * 1024;
 const maxVideo = 45 * 1024 * 1024;
 const maxAudio = 4 * 1024 * 1024;
 const bucketName = () => process.env.FIELD_STORAGE_BUCKET || "alianca-campo-privado";
-type FieldType = "image" | "video";
+type FieldType = "image" | "video" | "document";
+const maxDocument = 15 * 1024 * 1024;
 export type UploadClaim = {
   path: string; userId: string; sessionVersion: number; orderId: string;
   mimeType: string; fileName: string; sizeBytes: number; exp: number; type: FieldType;
@@ -26,14 +27,15 @@ function secret() {
 function hmac(data: string) { return createHmac("sha256", secret()).update(data).digest("base64url"); }
 export function mediaType(mimeType: string): FieldType {
   if (["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return "image";
+  if (mimeType === "application/pdf") return "document";
   if (["video/mp4", "video/webm", "video/quicktime"].includes(mimeType)) return "video";
-  throw new FieldError("Envie JPG, PNG, WEBP, MP4, WEBM ou MOV.");
+  throw new FieldError("Envie JPG, PNG, WEBP, PDF, MP4, WEBM ou MOV.");
 }
 export function validateMediaSize(mimeType: string, sizeBytes: number) {
   const type = mediaType(mimeType);
-  const max = type === "image" ? maxImage : maxVideo;
+  const max = type === "image" ? maxImage : type === "document" ? maxDocument : maxVideo;
   if (!Number.isInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > max)
-    throw new FieldError(type === "image" ? "Imagem deve ter até 10 MB." : "Vídeo deve ter até 45 MB.");
+    throw new FieldError(type === "image" ? "Imagem deve ter até 10 MB." : type === "document" ? "Comprovante PDF deve ter até 15 MB." : "Vídeo deve ter até 45 MB.");
   return type;
 }
 async function checkBucket() {
@@ -73,7 +75,7 @@ export async function createUploadTicket(userId: string, sessionVersion: number,
   const raw = result.url || result.signedURL || result.signedUrl;
   if (typeof raw !== "string") throw new FieldError("Resposta de envio inválida.");
   const payload = Buffer.from(JSON.stringify(claim)).toString("base64url");
-  return { uploadUrl: signedUrl(raw, c.url), token: `${payload}.${hmac(payload)}`, maxBytes: type === "image" ? maxImage : maxVideo };
+  return { uploadUrl: signedUrl(raw, c.url), token: `${payload}.${hmac(payload)}`, maxBytes: type === "image" ? maxImage : type === "document" ? maxDocument : maxVideo };
 }
 export function verifyUploadTicket(token: string): UploadClaim {
   const parts = token.split(".");
@@ -94,7 +96,7 @@ export async function verifyUploadedMedia(claim: UploadClaim) {
   const res = await fetch(url, { method: "HEAD", headers: c.headers, cache: "no-store", signal: AbortSignal.timeout(12000) });
   if (!res.ok) throw new FieldError("O arquivo ainda não foi enviado ao armazenamento.");
   const storedSize = Number(res.headers.get("content-length"));
-  if (storedSize > claim.sizeBytes || storedSize <= 0 || storedSize > (claim.type === "image" ? maxImage : maxVideo))
+  if (storedSize > claim.sizeBytes || storedSize <= 0 || storedSize > (claim.type === "image" ? maxImage : claim.type === "document" ? maxDocument : maxVideo))
     throw new FieldError("O tamanho recebido não corresponde ao envio.");
 }
 export async function readFieldImage(path: string, maxBytes = maxImage) {

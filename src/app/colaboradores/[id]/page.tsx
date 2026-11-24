@@ -30,7 +30,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
 
   return (
     <EmployeeDetailView
-      fieldAccount={{ userId: account?.id ?? null, name: employee.name, isActive: account?.isActive ?? false, mustChangePassword: account?.mustChangePassword }}
+      fieldAccount={{ userId: account?.id ?? null, name: employee.name, isActive: account?.isActive ?? false, mustChangePassword: account?.mustChangePassword, role: account?.role }}
       employee={{ ...employee, dailyCost: canViewServiceOrderFinancials(user) ? employee.dailyCost : 0, document: ["OWNER", "GERENTE"].includes(user.role) ? employee.document : "", notes: ["OWNER", "GERENTE"].includes(user.role) ? employee.notes : "" }}
       targetAccessRole={getEmployeeAccessRole(employee)}
       evaluations={db.evaluations.filter((item) => item.employeeId === id && visibleOrders.some((order) => order.id === item.serviceOrderId))}

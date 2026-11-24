@@ -6,6 +6,8 @@ export const fieldActionSchema = z.object({
     "DIARY", "CLARIFY", "CREATE_CHECKLIST", "ASSIGN_CHECKLIST", "START_CHECKLIST", "COMPLETE_CHECKLIST", "BLOCK_CHECKLIST",
     "REQUEST_MATERIAL", "STOCK_NEW", "STOCK_RECEIVE", "STOCK_DISPATCH", "STOCK_RETURN", "STOCK_CONSUME", "STOCK_DAMAGE", "STOCK_LOSS",
     "EQUIPMENT_DISPATCH", "EQUIPMENT_RETURN", "EQUIPMENT_DAMAGE",
+    "REPORT_ABSENCE", "REPORT_EARLY_LEAVE", "DESCRIBE_RECEIPT",
+    "SWITCH_ORDER", "SET_THEME", "REQUEST_REPORT",
   ]),
   confidence: z.enum(["HIGH", "LOW"]),
   question: z.string().max(600),
@@ -19,10 +21,14 @@ export const fieldActionSchema = z.object({
   materialName: z.string().max(160),
   unit: z.string().max(45),
   quantity: z.number().finite().positive().max(100000).nullable(),
+  occurredOn: z.string().max(10).nullable().optional().default(null),
+  occurredAt: z.string().max(5).nullable().optional().default(null),
+  receiptId: z.string().max(160).nullable().optional().default(null),
+  uiTheme: z.enum(["dark", "light"]).nullable().optional().default(null),
 });
 export type FieldAction = z.infer<typeof fieldActionSchema>;
 export const diaryAction = (): FieldAction => ({
   action: "DIARY", confidence: "HIGH", question: "", title: "", details: "",
   employeeIds: [], checklistItemId: null, targetOrderId: null, materialId: null,
-  equipmentId: null, materialName: "", unit: "", quantity: null,
+  equipmentId: null, materialName: "", unit: "", quantity: null, occurredOn: null, occurredAt: null, receiptId: null, uiTheme: null,
 });

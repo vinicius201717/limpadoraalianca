@@ -23,7 +23,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     <Stack spacing={3}>
       <RecordDetailView config={getModuleConfig("usuarios")} record={toPublicUser(user) as unknown as Record<string, unknown>} />
       <FieldProfileAccessCard viewerUserId={currentUser.id}
-        account={{ userId: user.id, name: user.name, isActive: user.isActive, mustChangePassword: user.mustChangePassword }} />
+        account={{ userId: user.id, name: user.name, isActive: user.isActive, mustChangePassword: user.mustChangePassword, role: user.role }} />
     </Stack>
   );
 }

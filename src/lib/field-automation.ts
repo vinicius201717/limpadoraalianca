@@ -2,7 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { fieldActionSchema, diaryAction, type FieldAction } from "./field-action-schema";
 import { interpretFieldCommand } from "./field-command-ai";
-import { appendFieldEntry, authorizeFieldContext, fieldActor, FieldError } from "./field-assistant";
+import { appendFieldEntry, authorizeFieldContext, fieldActor, fieldAssignment, FieldError } from "./field-assistant";
 import { authorizeServiceOrderAccess } from "./service-order-access";
 import { canManageStock, canRequestServiceMaterials } from "./permissions";
 import {
@@ -14,7 +14,8 @@ import { applyEquipmentMovement, applyMaterialMovement, InventoryError, isArchiv
 import type { AssistantAttachment, WorkHistoryEntry } from "./whatsapp-types";
 import type { Material, ServiceOrder, ServiceOrderEquipment, ServiceOrderMaterial, SessionUser } from "./types";
 
-type Outcome = { message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string };
+type UiDirective = { kind: "THEME" | "ORDER" | "REPORT"; value: string };
+type Outcome = { message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string; ui?: UiDirective };
 const rounded = (n: number) => Math.round(n * 1e6) / 1e6;
 const comparable = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
 const operational = (role: string) => ["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO"].includes(role);
@@ -100,21 +101,23 @@ function checkedStockMovement(user: SessionUser, stock: Material, link: ServiceO
 }
 export function fieldSpeechContext(user: SessionUser, orderId: string) {
   authorizeFieldContext(user, orderId);
-  const current = orderId === "warehouse" ? null : db.serviceOrders.find((o) => o.id === orderId)!;
-  const team = current ? db.employees.filter((e) => e.status === "ACTIVE" && isEmployeeAssignedToServiceOrder(current, e.id))
-    .map(({ id, name }) => ({ id, name })) : [];
+  const current = ["warehouse", "office"].includes(orderId) ? null : db.serviceOrders.find((o) => o.id === orderId)!;
+  const team = (["OWNER", "GERENTE"].includes(user.role) ? db.employees : current ? db.employees.filter((e) => e.status === "ACTIVE" && isEmployeeAssignedToServiceOrder(current, e.id)) : [])
+    .map(({ id, name }) => ({ id, name }));
   const checklist = current ? db.serviceOrderChecklistItems.filter((i) => i.serviceOrderId === current.id && !["DONE", "CANCELED"].includes(i.status))
     .slice(-100).map((i) => ({ id: i.id, title: i.title, status: i.status, assignedEmployeeIds: i.assignedEmployeeIds || [] })) : [];
   const materials = stockAllowed(user) || canRequestServiceMaterials(user.role) ? db.materials
     .filter((m) => !isArchivedStockItem(m)).slice(0, 350).map((m) => ({ id: m.id, name: m.name, unit: m.unit, available: m.currentStock })) : [];
   const equipment = stockAllowed(user) ? db.equipment.filter((e) => !isArchivedStockItem(e)).slice(0, 180)
     .map((e) => ({ id: e.id, name: e.name, code: e.code, status: e.status })) : [];
+  const receipts = db.fieldReceipts.filter((item) => item.uploadedByUserId === user.id && item.status === "PENDING_REVIEW" && (item.serviceOrderId || "office") === (current?.id || "office")).slice(-8).map(({ id, description, createdAt }) => ({ id, description, createdAt }));
   const inventoryOrders = stockAllowed(user) ? db.serviceOrders.filter((o) => isOpenServiceOrderForTeam(o.status))
     .filter((o) => { try { authorizeServiceOrderAccess(user, o.id, "materials"); return true; } catch { return false; } })
     .map((o) => ({ id: o.id, title: o.title, supervisor: o.supervisorEmployeeId })) : [];
   return {
+    authorizedOrders: fieldAssignment(user).orders.map(({ id, title }) => ({ id, title })),
     role: user.role, currentOrder: current ? { id: current.id, title: current.title, status: current.status } : null,
-    warehouseMode: orderId === "warehouse", employees: team, checklist, materials, equipment, inventoryOrders,
+    warehouseMode: orderId === "warehouse", employees: team, checklist, materials, equipment, inventoryOrders, receipts,
     today: new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }),
   };
 }
@@ -124,7 +127,75 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
   if (action.action === "DIARY") return { message: "Relato salvo no diário." };
   if (action.action === "CLARIFY" || action.confidence !== "HIGH")
     throw new FieldError(action.question.trim() || "Dê mais detalhes para executar a ação com segurança.");
-  const home = currentOrder === "warehouse" ? null : requireOpen(currentOrder);
+  if (action.action === "SET_THEME") {
+    if (!action.uiTheme) throw new FieldError("Informe se deseja o tema claro ou escuro.");
+    return { message: "Tema visual alterado para " + (action.uiTheme === "light" ? "claro" : "escuro") + ".",
+      ui: { kind: "THEME", value: action.uiTheme } };
+  }
+  if (action.action === "SWITCH_ORDER") {
+    const allowed = fieldAssignment(user).orders.find((order) => order.id === action.targetOrderId);
+    if (!allowed) throw new FieldError("Esta obra não pertence às opções disponíveis da sua conta.");
+    return { message: "Conversa alterada para " + allowed.title + ".",
+      ui: { kind: "ORDER", value: allowed.id } };
+  }
+  if (action.action === "REQUEST_REPORT") {
+    if (["office", "warehouse"].includes(currentOrder)) throw new FieldError("Selecione uma obra para gerar relatório.");
+    authorizeServiceOrderAccess(user, currentOrder, "history");
+    return { message: "Iniciando relatório da obra atual.",
+      ui: { kind: "REPORT", value: currentOrder } };
+  }
+  if (["REPORT_ABSENCE", "REPORT_EARLY_LEAVE"].includes(action.action)) {
+    if (!["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO"].includes(user.role))
+      throw new FieldError("Seu perfil não pode lançar ocorrências de equipe.");
+    if (!action.occurredOn || !/^\d{4}-\d{2}-\d{2}$/.test(action.occurredOn) || Number.isNaN(Date.parse(action.occurredOn)) ||
+      new Date(action.occurredOn).toISOString().slice(0, 10) !== action.occurredOn)
+      throw new FieldError("Informe a data exata da falta ou da saída antecipada.");
+    if (!action.employeeIds.length || action.employeeIds.length > 12 || new Set(action.employeeIds).size !== action.employeeIds.length)
+      throw new FieldError("Identifique um ou mais colaboradores da equipe sem repetição.");
+    if (action.occurredAt && !/^([01]\d|2[0-3]):[0-5]\d$/.test(action.occurredAt))
+      throw new FieldError("Horário inválido. Use HH:MM ou omita se não informado.");
+    if (Date.parse(action.occurredOn) > Date.now() + 86400000)
+      throw new FieldError("Ocorrência não pode acontecer no futuro.");
+    const order = ["warehouse", "office"].includes(currentOrder) ? null : requireOpen(currentOrder);
+    const workers = action.employeeIds.map((id) => {
+      const worker = db.employees.find((e) => e.id === id);
+      if (!worker || worker.status === "FIRED") throw new FieldError("Funcionário não encontrado.");
+      if (!["OWNER", "GERENTE"].includes(user.role) && (!order || !isEmployeeAssignedToServiceOrder(order, id)))
+        throw new FieldError("Somente funcionários vinculados à sua obra podem ser registrados.");
+      return worker;
+    });
+    const type = action.action === "REPORT_ABSENCE" ? "ABSENCE" : "EARLY_LEAVE";
+    for (const worker of workers) {
+      const record = { id: "attendance-" + randomUUID(), serviceOrderId: order?.id || null,
+        employeeId: worker.id, employeeName: worker.name, kind: type as "ABSENCE" | "EARLY_LEAVE",
+        occurredOn: action.occurredOn, occurredAt: action.occurredAt || undefined,
+        description: action.details.trim().slice(0, 2500), reportedByUserId: user.id,
+        reportedByName: user.name, sourceMessageId: source,
+        status: "REPORTED" as const, createdAt: new Date().toISOString() };
+      db.staffAttendanceReports.push(record);
+      recordAuditLog({ userId: user.id, action: "FIELD_ATTENDANCE_REPORTED", entity: "StaffAttendance", entityId: record.id, newValueJson: record });
+    }
+    return { message: (type === "ABSENCE" ? "Falta informada" : "Saída antecipada informada") + " para " +
+      workers.map((e) => e.name).join(", ") + " em " + action.occurredOn +
+      (action.occurredAt ? " às " + action.occurredAt : "") + ". Registro pendente de conferência, sem desconto ou advertência automática." };
+  }
+  if (action.action === "DESCRIBE_RECEIPT") {
+    const candidates = db.fieldReceipts.filter((item) => item.uploadedByUserId === user.id &&
+      item.status === "PENDING_REVIEW" && (item.serviceOrderId || "office") === (currentOrder === "warehouse" ? "office" : currentOrder));
+    const receipt = action.receiptId
+      ? candidates.find((item) => item.id === action.receiptId)
+      : candidates.length === 1 ? candidates[0] : null;
+    if (!receipt || !action.details.trim())
+      throw new FieldError("Há vários comprovantes ou nenhum pendente. Diga qual documento e sua descrição.");
+    const old = { description: receipt.description };
+    receipt.description = [receipt.description, action.details.trim()].filter(Boolean).join("\n").slice(0, 2400);
+    receipt.updatedAt = new Date().toISOString();
+    const linked = db.financialDocuments.find((item) => item.id === receipt.id);
+    if (linked) linked.description = receipt.description;
+    recordAuditLog({ userId: user.id, action: "FIELD_RECEIPT_DESCRIBED", entity: "FieldReceipt", entityId: receipt.id, oldValueJson: old, newValueJson: { description: receipt.description } });
+    return { message: "Descrição anexada ao comprovante do financeiro. Aguardando conferência.", entityId: receipt.id };
+  }
+  const home = ["warehouse", "office"].includes(currentOrder) ? null : requireOpen(currentOrder);
   const title = action.title.trim();
   const description = action.details.trim();
   if (["CREATE_CHECKLIST", "ASSIGN_CHECKLIST", "START_CHECKLIST", "COMPLETE_CHECKLIST", "BLOCK_CHECKLIST"].includes(action.action)) {
@@ -297,7 +368,7 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
 
 export type FieldStatementResult = {
   entry: WorkHistoryEntry;
-  operation: { status: "executed" | "diary" | "pending"; message: string; entityId?: string };
+  operation: { status: "executed" | "diary" | "pending"; message: string; entityId?: string; ui?: UiDirective };
 };
 
 /** Called inside withDatabase's durable transaction; writes are atomic with the diary entry. */
@@ -312,7 +383,7 @@ export async function processFieldStatement(input: {
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(nonce) || !text.trim() || text.length > 12000)
     throw new FieldError("Relato vazio, longo demais ou com identificador inválido.");
   const source = "campo:" + user.id + ":" + nonce;
-  const anyEntry = [...db.workHistory, ...db.warehouseJournal].find((e) => e.messageId === source);
+  const anyEntry = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((e) => e.messageId === source);
   if (anyEntry) {
     if (anyEntry.serviceOrderId !== orderId) throw new FieldError("Este envio já pertence a outra obra.");
     return { entry: anyEntry, operation: { status: "diary", message: "Este relato já estava salvo. Nenhuma ação duplicada." } };
@@ -370,5 +441,5 @@ export async function processFieldStatement(input: {
         messageId: source + ":destino:" + outcome.targetOrderId, title: "Movimento de material/equipamento na obra" });
     }
   }
-  return { entry, operation: { status, message: outcome.message, entityId: outcome.entityId } };
+  return { entry, operation: { status, message: outcome.message, entityId: outcome.entityId, ui: outcome.ui } };
 }

@@ -21,11 +21,11 @@ export const POST = withDatabase(async (request) => {
   catch { return Response.json({ message: "A gravação não pertence à sua obra ativa." }, { status: 403 }); }
   const nonce = "sess_" + input.sessionId;
   const source = "campo:" + auth.user.id + ":" + nonce;
-  const persisted = [...db.workHistory, ...db.warehouseJournal].find((entry) => entry.messageId === source);
+  const persisted = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((entry) => entry.messageId === source);
   if (persisted) return Response.json({ entry: persisted, operation: { status: "diary", message: "Gravação já consolidada, sem duplicar ações." } });
   const retry = await consumeRateLimit("field-finalize", auth.user.id, 45, 60 * 60_000);
   if (retry) return Response.json({ message: "Muitas gravações finalizadas nesta hora." }, { status: 429 });
-  const entries = [...db.workHistory, ...db.warehouseJournal]
+  const entries = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal]
     .filter((entry) => entry.userId === auth.user.id && entry.serviceOrderId === input.orderId &&
       entry.recordingSessionId === input.sessionId &&
       entry.messageId.startsWith("campo:" + auth.user.id + ":"))

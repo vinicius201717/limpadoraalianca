@@ -1,24 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, Chip, CircularProgress, Drawer, IconButton, MenuItem, Select, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, Drawer, IconButton, InputBase, Menu, MenuItem, Select, Stack, TextField, Typography } from "@mui/material";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
 import StopRoundedIcon from "@mui/icons-material/StopRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import VideocamRoundedIcon from "@mui/icons-material/VideocamRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
-import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
+import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
+import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
+import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
+import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import DoneAllRoundedIcon from "@mui/icons-material/DoneAllRounded";
+import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import type { WorkHistoryEntry, WorkReport } from "@/lib/whatsapp-types";
 
 type Order = { id: string; title: string; status: string; customer?: string };
-type Data = { user: { name: string; role: string }; orders: Order[]; entries: WorkHistoryEntry[];
+type Data = { user: { id?: string; name: string; role: string; canViewFinancials?: boolean }; orders: Order[]; entries: WorkHistoryEntry[];
   reports: WorkReport[]; warehouseJournal?: WorkHistoryEntry[];
   locked?: boolean; assignedOrderId?: string | null; assignmentProblem?: string | null };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+type StaffReport = { id: string; employeeName: string; occurredOn: string; occurredAt?: string; kind: "ABSENCE" | "EARLY_LEAVE"; description: string; reportedByName: string };
+type ReceiptOverview = { id: string; fileName: string; description: string; status: string; uploadedByName: string; createdAt: string };
+type FieldOperation = { status: string; message: string; ui?: { kind: "THEME" | "ORDER" | "REPORT"; value: string } };
+type FieldColor = "dark" | "light";
 const newNonce = () => crypto.randomUUID().replace(/-/g, "");
 async function retryCommit(send: () => Promise<Response>) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -107,6 +118,16 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const [finalizing, setFinalizing] = useState(false);
   const [pending, setPending] = useState(0);
   const [warehouseOpen, setWarehouseOpen] = useState(false);
+  const [themeMode, setThemeMode] = useState<FieldColor>("dark");
+  const [attachmentAnchor, setAttachmentAnchor] = useState<HTMLElement | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptDescription, setReceiptDescription] = useState("");
+  const [dictating, setDictating] = useState(false);
+  const [staffOpen, setStaffOpen] = useState(false);
+  const [staffReports, setStaffReports] = useState<StaffReport[]>([]);
+  const [financeOpen, setFinanceOpen] = useState(false);
+  const [financeReceipts, setFinanceReceipts] = useState<ReceiptOverview[]>([]);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const shouldContinue = useRef(false);
@@ -119,6 +140,11 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const timeline = useRef<HTMLDivElement | null>(null);
   const photoInput = useRef<HTMLInputElement | null>(null);
   const videoInput = useRef<HTMLInputElement | null>(null);
+  const cameraInput = useRef<HTMLInputElement | null>(null);
+  const receiptFileInput = useRef<HTMLInputElement | null>(null);
+  const receiptCameraInput = useRef<HTMLInputElement | null>(null);
+  const dictateRecorder = useRef<MediaRecorder | null>(null);
+  const dictateStream = useRef<MediaStream | null>(null);
   const orderRef = useRef("");
   const loadSeq = useRef(0);
 
@@ -132,7 +158,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     let live = true;
     void fetch("/api/campo", { cache: "no-store" }).then((res) => asJson<Data>(res)).then((r) => {
       if (!live) return;
-      const autoId = r.locked ? r.assignedOrderId : r.orders.length === 1 ? r.orders[0].id : null;
+      const autoId = r.assignedOrderId || (r.orders.length === 1 ? r.orders[0].id : null);
       if (autoId) { setOrderId(autoId); orderRef.current = autoId; void load(autoId); }
       else setData(r);
     }).catch((e) => { if (live) setError(e.message); });
@@ -154,6 +180,17 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   }, [load]);
   useEffect(() => { if (timeline.current) timeline.current.scrollTop = timeline.current.scrollHeight; }, [data.entries, data.reports]);
   useEffect(() => {
+    const choice = localStorage.getItem("alianca-campo-theme");
+    if (choice !== "light" && choice !== "dark") return;
+    const frame = requestAnimationFrame(() => setThemeMode(choice));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  function changeTheme() {
+    const next = themeMode === "dark" ? "light" : "dark";
+    setThemeMode(next);
+    localStorage.setItem("alianca-campo-theme", next);
+  }
+  useEffect(() => {
     if (!recording) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
@@ -165,6 +202,29 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     setOrderId(next); orderRef.current = next; setError(""); setNotice("");
     void load(next).catch((e) => setError(e.message));
   }
+  function handleVoiceUi(operation?: FieldOperation) {
+    const ui = operation?.ui;
+    if (!ui) return;
+    if (ui.kind === "THEME" && (ui.value === "light" || ui.value === "dark")) {
+      setThemeMode(ui.value); localStorage.setItem("alianca-campo-theme", ui.value);
+    }
+    if (ui.kind === "ORDER" && data.orders.some((order) => order.id === ui.value) && !data.locked) {
+      orderRef.current = ui.value;
+      setOrderId(ui.value);
+      void load(ui.value).catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao mudar de obra."));
+    }
+    if (ui.kind === "REPORT" && ui.value === orderRef.current && !["office", "warehouse"].includes(ui.value)) {
+      const target = ui.value;
+      setNotice("Gerando relatório por comando de voz...");
+      void (async () => {
+        try {
+          await asJson(await fetch(`/api/service-orders/${encodeURIComponent(target)}/history/report`, { method: "POST" }));
+          await load(target);
+          setNotice("Relatório gerado e salvo no histórico.");
+        } catch (error) { setError(error instanceof Error ? error.message : "Falha ao gerar relatório."); }
+      })();
+    }
+  }
   async function submitText() {
     if (!orderRef.current) { setError("Selecione a obra primeiro."); return; }
     const text = draft.trim(); if (!text || busy || finalizing) return;
@@ -173,11 +233,12 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     try {
       const nonce = newNonce();
       const body = JSON.stringify({ orderId: submittedOrder, nonce, text });
-      const r = await asJson<{ entry: WorkHistoryEntry; operation?: { status: string; message: string } }>(await retryCommit(() => fetch("/api/campo/registro", {
+      const r = await asJson<{ entry: WorkHistoryEntry; operation?: FieldOperation }>(await retryCommit(() => fetch("/api/campo/registro", {
         method: "POST", headers: { "Content-Type": "application/json" }, body,
       })));
       if (orderRef.current === submittedOrder) setData((s) => ({ ...s, entries: s.entries.some((x) => x.id === r.entry.id) ? s.entries : [...s.entries, r.entry] }));
       setDraft("");
+      if (r.operation) handleVoiceUi(r.operation);
       if (r.operation) setNotice(r.operation.status === "executed" ? r.operation.message
         : r.operation.status === "pending" ? "Ação pendente: " + r.operation.message : "Relato salvo no diário.");
     } catch (e) { setError(e instanceof Error ? e.message : "Falha ao registrar texto."); }
@@ -189,8 +250,9 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     if (sessionId) form.set("sessionId", sessionId);
     setPending((v) => v + 1);
     try {
-      const r = await asJson<{ entry: WorkHistoryEntry; operation?: { status: string; message: string } }>(await retryCommit(() => fetch("/api/campo/audio", { method: "POST", body: form })));
+      const r = await asJson<{ entry: WorkHistoryEntry; operation?: FieldOperation }>(await retryCommit(() => fetch("/api/campo/audio", { method: "POST", body: form })));
       if (orderRef.current === target) setData((s) => ({ ...s, entries: [...s.entries.filter((x) => x.id !== r.entry.id), r.entry] }));
+      if (r.operation) handleVoiceUi(r.operation);
       if (r.operation?.status === "pending") setNotice("Ação pendente: " + r.operation.message);
       else if (r.operation?.status === "executed") setNotice(r.operation.message);
     } catch (e) { if (sessionId) failedSegments.current++; setError(e instanceof Error ? e.message : "Falha ao transcrever. Regrave o trecho."); }
@@ -206,12 +268,13 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     setNotice("Transcrição salva. IA interpretando a instrução completa...");
     try {
       const payload = JSON.stringify({ orderId: target, sessionId });
-      const result = await asJson<{ entry?: WorkHistoryEntry; operation?: { status: string; message: string } }>(
+      const result = await asJson<{ entry?: WorkHistoryEntry; operation?: FieldOperation }>(
         await retryCommit(() => fetch("/api/campo/finalizar", { method: "POST",
           headers: { "Content-Type": "application/json" }, body: payload })));
       if (result.entry && orderRef.current === target) setData((state) => ({
         ...state, entries: state.entries.some((e) => e.id === result.entry!.id) ? state.entries : [...state.entries, result.entry!],
       }));
+      if (result.operation) handleVoiceUi(result.operation);
       if (result.operation) setNotice(result.operation.status === "executed"
         ? result.operation.message : result.operation.status === "pending"
           ? "Pendente: " + result.operation.message : "Gravação registrada no diário.");
@@ -273,6 +336,86 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       setRecording(true);
     } catch { setError("Não foi possível acessar o microfone. Verifique a permissão do navegador."); }
   }
+  function selectReceipt(file: File | undefined) {
+    setAttachmentAnchor(null);
+    if (!file) return;
+    const mime = file.type.split(";")[0].toLowerCase();
+    if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(mime) || file.size > 15 * 1024 * 1024) {
+      setError("Comprovante precisa ser JPG, PNG, WEBP ou PDF, com até 15 MB."); return;
+    }
+    if (!orderRef.current) { setError("Selecione a obra ou diário antes de enviar."); return; }
+    setReceiptFile(file); setReceiptDescription(draft.trim()); setReceiptOpen(true);
+  }
+  async function sendReceipt() {
+    const file = receiptFile; const target = orderRef.current;
+    if (!file || !target || busy || dictating || !receiptDescription.trim()) return;
+    setBusy(true); setError(""); setNotice("Enviando comprovante ao financeiro...");
+    try {
+      const mime = file.type.split(";")[0].toLowerCase();
+      const ticket = await asJson<{ uploadUrl: string; token: string }>(await fetch("/api/campo/upload", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: target, fileName: file.name, mimeType: mime, sizeBytes: file.size }),
+      }));
+      const sent = await fetch(ticket.uploadUrl, { method: "PUT", headers: { "Content-Type": mime }, body: file });
+      if (!sent.ok) throw new Error("Não foi possível enviar o arquivo ao armazenamento privado.");
+      const nonce = newNonce();
+      const payload = JSON.stringify({ ticket: ticket.token, nonce, description: receiptDescription.trim() });
+      const response = await asJson<{ message: string; receipt: { id: string; status: string } }>(
+        await retryCommit(() => fetch("/api/campo/comprovante", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: payload })));
+      setReceiptOpen(false); setReceiptFile(null); setReceiptDescription(""); setDraft("");
+      setNotice(response.message);
+      if (orderRef.current === target) void load(target).catch(() => {});
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao salvar o comprovante."); }
+    finally { setBusy(false); }
+  }
+  async function toggleDictation() {
+    if (dictateRecorder.current?.state === "recording") { dictateRecorder.current.stop(); setDictating(false); return; }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setError("Ditado indisponível neste navegador."); return;
+    }
+    try {
+      const media = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = mime ? new MediaRecorder(media, { mimeType: mime }) : new MediaRecorder(media);
+      const buffers: Blob[] = []; dictateRecorder.current = recorder; dictateStream.current = media;
+      recorder.ondataavailable = (event) => { if (event.data.size) buffers.push(event.data); };
+      recorder.onstop = () => {
+        setDictating(false);
+        const type = recorder.mimeType.split(";")[0] || "audio/webm";
+        const audio = new File(buffers, type.includes("mp4") ? "ditado.m4a" : "ditado.webm", { type });
+        media.getTracks().forEach((track) => track.stop());
+        if (!audio.size) return;
+        void (async () => {
+          setBusy(true); setNotice("Transcrevendo descrição do comprovante...");
+          try {
+            const form = new FormData(); form.set("audio", audio);
+            const result = await asJson<{ text: string }>(await fetch("/api/campo/transcrever", { method: "POST", body: form }));
+            setReceiptDescription((current) => (current.trim() ? current.trim() + " " : "") + result.text.trim());
+            setNotice("Descrição ditada e pronta para anexar.");
+          } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível transcrever o ditado."); }
+          finally { setBusy(false); }
+        })();
+      };
+      recorder.start();
+      setDictating(true); setError("");
+      setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 15000);
+    } catch { setError("Autorize o microfone para ditar a descrição."); }
+  }
+  async function openStaff() {
+    setStaffOpen(true);
+    try {
+      const result = await asJson<{ reports: StaffReport[] }>(await fetch("/api/campo/ocorrencias", { cache: "no-store" }));
+      setStaffReports(result.reports);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar ocorrências."); }
+  }
+  async function openFinance() {
+    setFinanceOpen(true);
+    try {
+      const result = await asJson<{ receipts: ReceiptOverview[] }>(await fetch("/api/finance/campo-comprovantes", { cache: "no-store" }));
+      setFinanceReceipts(result.receipts);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar financeiro."); }
+  }
   async function uploadFile(file: File, type: "image" | "video") {
     const target = orderRef.current;
     if (!target) { setError("Selecione uma obra antes de enviar mídias."); return; }
@@ -289,10 +432,10 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       if (!sent.ok) throw new Error("Falha no envio ao armazenamento privado. Verifique o tamanho e a conexão.");
       const result = await asJson<{ entry: WorkHistoryEntry; analysisFailed?: boolean }>(await fetch("/api/campo/midia", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticket: ticket.token, nonce: newNonce(), caption: caption.trim(), frames }),
+        body: JSON.stringify({ ticket: ticket.token, nonce: newNonce(), caption: (draft.trim() || caption.trim()), frames }),
       }));
       if (orderRef.current === target) setData((s) => ({ ...s, entries: [...s.entries, result.entry] }));
-      setCaption("");
+      setCaption(""); setDraft("");
       setNotice(result.analysisFailed ? "Arquivo salvo. A descrição visual automática ficou indisponível." : "Arquivo salvo e analisado na obra.");
       if (type === "video") {
         const audio = await extractVideoSpeech(file);
@@ -313,87 +456,309 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     finally { setBusy(false); }
   }
   const selected = data.orders.find((o) => o.id === orderId);
+  const colors = themeMode === "dark" ? {
+    page: "#071a21", header: "#123238", bar: "#123b42", wallpaper: "#0b252c",
+    border: "#285157", text: "#effbf5", muted: "#afc9c7", accent: "#17a778",
+    bubble: "#185745", incoming: "#17353c", input: "#204048",
+    shadow: "rgba(0,0,0,.22)", notice: "#c6f4db", dialog: "#123238",
+  } : {
+    page: "#f0f6f2", header: "#e5f3ec", bar: "#e7f4ed", wallpaper: "#edf6f0",
+    border: "#cbded5", text: "#163b37", muted: "#577b72", accent: "#0b8864",
+    bubble: "#d2f2df", incoming: "#ffffff", input: "#ffffff",
+    shadow: "rgba(22,65,50,.09)", notice: "#186b54", dialog: "#f6fbf7",
+  };
+  const canStaff = ["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO"].includes(data.user.role);
+  const canFinance = data.user.role === "OWNER" || data.user.role === "FINANCEIRO" || (data.user.role === "GERENTE" && data.user.canViewFinancials === true);
+
   return (
-    <Box component="main" sx={{ position: "fixed", inset: 0, height: "100dvh", width: "100vw", zIndex: 1600, bgcolor: "#071728", color: "#f6f8fa", display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: "var(--font-geist-sans)" }}>
-      <Box sx={{ px: { xs: 1.5, sm: 3 }, py: 1.3, display: "flex", alignItems: "center", gap: 1.5, bgcolor: "#0c2138", borderBottom: "1px solid #264458", flexShrink: 0 }}>
-        <Box sx={{ width: 37, height: 37, borderRadius: 2, display: "grid", placeItems: "center", bgcolor: "#163a48" }}><MicRoundedIcon sx={{ color: "#75e5ad" }} /></Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}><Typography fontWeight={850} sx={{ fontSize: { xs: 15, sm: 19 }, lineHeight: 1.3 }}>Aliança • Assistente de campo</Typography><Typography variant="caption" sx={{ color: "#a7bccc" }} noWrap>{userName} · diário e evidências da obra</Typography></Box>
-        {["OWNER", "GERENTE", "ALMOXARIFADO"].includes(data.user.role) &&
-          <IconButton onClick={() => setWarehouseOpen(true)} aria-label="Consultar diário do almoxarifado" sx={{ color: "#a7e5d0" }}>
-            <Inventory2RoundedIcon />
-          </IconButton>}
-        {installPrompt && <Button size="small" variant="outlined" sx={{ borderColor: "#5d9d89", color: "#a6eed1" }} onClick={() => void installPrompt.prompt()}>Instalar app</Button>}
-        <IconButton onClick={() => void load(orderRef.current).catch((e) => setError(e.message))} aria-label="Atualizar registros" sx={{ color: "#b5cbd8" }}><ReplayRoundedIcon /></IconButton>
+    <Box component="main" data-alianca-theme={themeMode} sx={{
+      position: "fixed", inset: 0, width: "100vw", height: "100dvh", zIndex: 1600,
+      display: "flex", flexDirection: "column", bgcolor: colors.page, color: colors.text,
+      overflow: "hidden", fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+    }}>
+      {/* WhatsApp-like compact messenger header, with Aliança colours and own branding. */}
+      <Box sx={{
+        display: "flex", alignItems: "center", gap: 1.2,
+        px: { xs: 1.5, sm: 2.5 }, py: 1.2, flexShrink: 0,
+        bgcolor: colors.header, borderBottom: `1px solid ${colors.border}`,
+      }}>
+        <Box sx={{
+          display: "grid", placeItems: "center", bgcolor: colors.accent, color: "#fff",
+          height: { xs: 43, sm: 48 }, width: { xs: 43, sm: 48 }, borderRadius: "50%",
+          boxShadow: "0 1px 7px #0002", flexShrink: 0,
+        }}><MicRoundedIcon sx={{ fontSize: 26 }} /></Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography fontWeight={850} sx={{ fontSize: { xs: 16, sm: 18 }, lineHeight: 1.2, color: colors.text }}>
+            Aliança Campo
+          </Typography>
+          <Typography variant="caption" sx={{ display: "block", color: colors.muted }} noWrap>
+            {recording ? "Gravando mensagem de voz..." : finalizing ? "Organizando registro..." : userName + " · registro operacional"}
+          </Typography>
+        </Box>
+        {canStaff && <IconButton size="small" onClick={() => void openStaff()} aria-label="Ver faltas e saídas antecipadas"
+          sx={{ color: colors.text }}><PeopleAltRoundedIcon /></IconButton>}
+        {canFinance && <IconButton size="small" onClick={() => void openFinance()} aria-label="Ver comprovantes do financeiro"
+          sx={{ color: colors.text }}><ReceiptLongRoundedIcon /></IconButton>}
+        {["OWNER", "GERENTE", "ALMOXARIFADO"].includes(data.user.role) && <IconButton size="small" onClick={() => setWarehouseOpen(true)}
+          aria-label="Ver almoxarifado" sx={{ color: colors.text }}><Inventory2RoundedIcon /></IconButton>}
+        <IconButton size="small" onClick={changeTheme} aria-label={themeMode === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
+          sx={{ color: colors.text }}>{themeMode === "dark" ? <LightModeRoundedIcon /> : <DarkModeRoundedIcon />}</IconButton>
+        <IconButton size="small" onClick={() => void load(orderRef.current).catch((e) => setError(e.message))}
+          aria-label="Atualizar histórico" sx={{ color: colors.text }}><ReplayRoundedIcon /></IconButton>
       </Box>
-      <Box sx={{ px: { xs: 1.5, sm: 3 }, py: 1.25, bgcolor: "#102942", borderBottom: "1px solid #264458", display: "flex", flexDirection: "column", gap: 0.7, flexShrink: 0 }}>
-        <Typography variant="caption" sx={{ color: "#b3cfdb", fontWeight: 700 }}>OBRA EM QUE ESTE RELATO SERÁ SALVO</Typography>
-        {data.locked ? (
-          <Box sx={{ bgcolor: "#173650", border: "1px solid #4b7186", borderRadius: 2, px: 1.6, py: 1.2 }}>
-            <Typography fontWeight={800} sx={{ color: "#ecfaf3" }}>{selected ? selected.title : "Sem obra vinculada"}</Typography>
-            <Typography variant="caption" sx={{ color: "#acd2cb" }}>Vínculo automático pelo seu perfil. Não é possível trocar a obra por aqui.</Typography>
+      <Box sx={{
+        flexShrink: 0, bgcolor: colors.bar, px: { xs: 1.5, sm: 3 }, py: 1.05,
+        borderBottom: `1px solid ${colors.border}`,
+        display: "flex", alignItems: "center", gap: 1.2,
+      }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ color: colors.muted, fontSize: 10, fontWeight: 850, letterSpacing: ".11em" }}>
+            {data.user.role === "SUPERVISOR_OBRA" ? "OBRA SOB SUA SUPERVISÃO" :
+              orderId === "warehouse" ? "ALMOXARIFADO" : "CONVERSA VINCULADA À"}
+          </Typography>
+          {data.locked ? <Typography noWrap fontWeight={750} sx={{ fontSize: 13.5, color: colors.text }}>
+            {selected?.title || "Sem obra atribuída"}
+          </Typography> :
+          <Select size="small" fullWidth displayEmpty value={orderId} disabled={recording || finalizing || busy || pending > 0}
+            onChange={(event) => chooseOrder(event.target.value)}
+            sx={{
+              height: 35, bgcolor: colors.input, color: colors.text, borderRadius: 2, fontWeight: 750,
+              "& .MuiSvgIcon-root": { color: colors.text },
+              "& .MuiOutlinedInput-notchedOutline": { borderColor: colors.border },
+            }}>
+            <MenuItem value="">Selecione uma obra ou diário</MenuItem>
+            {data.orders.map((order) => <MenuItem key={order.id} value={order.id}>
+              {order.title}{order.customer ? " · " + order.customer : ""}
+            </MenuItem>)}
+          </Select>}
+        </Box>
+        {installPrompt && <Button onClick={() => void installPrompt.prompt()} size="small"
+          sx={{ color: colors.accent, minWidth: 0, fontSize: 12, textTransform: "none", fontWeight: 800 }}>
+          Instalar
+        </Button>}
+      </Box>
+      <Box ref={timeline} role="log" aria-live="polite" aria-label="Conversa, transcrições e registros"
+        sx={{
+          flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain",
+          bgcolor: colors.wallpaper,
+          backgroundImage: themeMode === "dark" ?
+            "radial-gradient(circle at 20px 20px,rgba(100,170,143,.07) 1px,transparent 2px),radial-gradient(circle at 75px 70px,rgba(100,170,143,.045) 1px,transparent 2px)" :
+            "radial-gradient(circle at 20px 20px,rgba(60,140,90,.09) 1px,transparent 2px),radial-gradient(circle at 75px 70px,rgba(60,140,90,.05) 1px,transparent 2px)",
+          backgroundSize: "92px 92px",
+          px: { xs: 1.1, sm: 3, md: 5 }, py: 1.8,
+          display: "flex", flexDirection: "column", gap: 1,
+        }}>
+        <Box sx={{
+          mx: "auto", mb: 1.5, px: 2, py: 0.65, borderRadius: 10, bgcolor: colors.incoming,
+          color: colors.muted, fontSize: 11, boxShadow: `0 1px 3px ${colors.shadow}`, fontWeight: 750,
+        }}>
+          {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
+        </Box>
+        {data.assignmentProblem && <Alert severity="warning" sx={{ maxWidth: 560, mx: "auto" }}>{data.assignmentProblem}</Alert>}
+        {!orderId && !data.assignmentProblem && <Box sx={{ m: "auto", textAlign: "center", maxWidth: 320 }}>
+          <MicRoundedIcon sx={{ fontSize: 56, color: colors.accent }} />
+          <Typography fontWeight={750} sx={{ fontSize: 17, mt: 0.6 }}>Sua conversa começa aqui</Typography>
+          <Typography sx={{ color: colors.muted, fontSize: 13, mt: 0.8 }}>
+            Selecione a obra ou diário acima para falar, digitar, fotografar ou enviar comprovantes.
+          </Typography>
+        </Box>}
+        {!!orderId && data.entries.length === 0 && <Box sx={{ m: "auto", textAlign: "center", maxWidth: 310 }}>
+          <Typography sx={{ color: colors.muted, fontSize: 13 }}>
+            Conte o que aconteceu. Os relatos e as ações autorizadas ficarão registrados aqui.
+          </Typography>
+        </Box>}
+        {data.entries.map((entry) => {
+          const own = entry.userId === data.user.id;
+          const senderRight = own;
+          const extra = /Ação executada:|Pendente, sem alteração automática:/.test(entry.content);
+          return <Box key={entry.id} sx={{
+            alignSelf: senderRight ? "flex-end" : "flex-start",
+            maxWidth: "min(92%, 650px)", minWidth: 110, width: "fit-content",
+            bgcolor: senderRight ? colors.bubble : colors.incoming,
+            borderRadius: senderRight ? "12px 12px 3px 12px" : "12px 12px 12px 3px",
+            px: 1.55, py: 1.15, boxShadow: `0 1px 5px ${colors.shadow}`,
+            overflowWrap: "anywhere", border: themeMode === "light" ? `1px solid ${colors.border}` : "none",
+          }}>
+            <Typography sx={{ fontSize: 11, color: colors.accent, fontWeight: 850, mb: 0.3 }}>{entry.authorName}</Typography>
+            {entry.transcript && entry.title.toLowerCase().includes("áudio") && <Stack direction="row" spacing={0.8} alignItems="center" sx={{ mb: 0.6 }}>
+              <MicRoundedIcon sx={{ fontSize: 16, color: colors.accent }} />
+              <Typography sx={{ fontSize: 11, color: colors.muted }}>Áudio transcrito</Typography>
+            </Stack>}
+            <Typography sx={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap", color: colors.text }}>
+              {entry.content}
+            </Typography>
+            {entry.attachment && <Button
+              href={entry.attachment.storagePath.startsWith("campo/") ? `/api/campo/midia/${entry.attachment.id}` : `/api/whatsapp/media/${entry.attachment.id}`}
+              target="_blank" rel="noopener noreferrer" startIcon={<DescriptionRoundedIcon />}
+              sx={{ color: colors.accent, fontSize: 11, mt: 0.3, textTransform: "none" }}>
+              Abrir anexo
+            </Button>}
+            <Stack direction="row" justifyContent="flex-end" alignItems="center" gap={0.5} sx={{ pt: 0.4 }}>
+              {extra && <Chip size="small" label="Ação registrada" sx={{ color: colors.accent, height: 19, fontSize: 9, bgcolor: colors.input }} />}
+              <Typography sx={{ fontSize: 10, color: colors.muted }}>
+                {new Date(entry.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+              </Typography>
+              {senderRight && <DoneAllRoundedIcon sx={{ fontSize: 14, color: colors.accent }} />}
+            </Stack>
+          </Box>;
+        })}
+        {data.reports.slice(-1).map((report) => <Box key={report.id} sx={{
+          alignSelf: "flex-start", maxWidth: "min(94%, 760px)", bgcolor: colors.incoming,
+          color: colors.text, borderRadius: 2.5, px: 2, py: 1.5, boxShadow: `0 1px 4px ${colors.shadow}`,
+        }}>
+          <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1 }}><AutoAwesomeRoundedIcon sx={{ fontSize: 18, color: colors.accent }}/><Typography fontWeight={850}>Relatório da Aliança</Typography></Stack>
+          <Typography sx={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{report.content}</Typography>
+        </Box>)}
+      </Box>
+      <Box sx={{
+        flexShrink: 0, bgcolor: colors.header, px: { xs: 1.1, sm: 2.5 },
+        pt: 1.05, pb: "max(9px,env(safe-area-inset-bottom))",
+        borderTop: `1px solid ${colors.border}`,
+      }}>
+        {(error || notice) && <Box sx={{ mb: 0.7 }}>
+          {error && <Alert severity="error" onClose={() => setError("")} sx={{ fontSize: 12, py: 0.1 }}>{error}</Alert>}
+          {!error && notice && <Typography sx={{ textAlign: "center", color: colors.notice, fontSize: 12, fontWeight: 650 }}>{notice}</Typography>}
+        </Box>}
+        {recording && <Stack direction="row" alignItems="center" justifyContent="center" gap={1} sx={{ mb: 0.9 }}>
+          <Box sx={{ bgcolor: "#f35c62", height: 9, width: 9, borderRadius: "50%", animation: "campo-pulse 1s infinite" }} />
+          <Typography sx={{ color: "#ff8f93", fontSize: 12, fontWeight: 750 }}>Gravando · transcrição a cada 15 segundos</Typography>
+        </Stack>}
+        <Stack direction="row" alignItems="flex-end" gap={0.8}>
+          <Box sx={{
+            bgcolor: colors.input, color: colors.text, minHeight: 45, flex: 1,
+            display: "flex", alignItems: "center", borderRadius: "24px", px: 0.2,
+            border: themeMode === "light" ? `1px solid ${colors.border}` : "none",
+          }}>
+            <IconButton size="small" aria-label="Anexar foto, vídeo ou comprovante"
+              disabled={!orderId || recording || finalizing || busy}
+              onClick={(event) => setAttachmentAnchor(event.currentTarget)}
+              sx={{ color: colors.muted, ml: 0.4 }}><AttachFileRoundedIcon /></IconButton>
+            <InputBase fullWidth multiline maxRows={4} value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              disabled={!orderId || recording || finalizing || busy}
+              placeholder={recording ? "Gravando..." : "Mensagem"}
+              sx={{
+                flex: 1, minWidth: 0, color: colors.text, fontSize: 14,
+                py: 0.8, px: 0.5, "& textarea::placeholder": { color: colors.muted, opacity: 1 },
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault(); void submitText();
+                }
+              }} />
+            <IconButton size="small" aria-label="Tirar foto agora" disabled={!orderId || recording || finalizing || busy}
+              onClick={() => cameraInput.current?.click()} sx={{ color: colors.muted, mr: 0.5 }}>
+              <CameraAltRoundedIcon />
+            </IconButton>
           </Box>
-        ) : (
-          <Select fullWidth size="small" displayEmpty value={orderId} disabled={recording || finalizing || busy || pending > 0}
-            onChange={(event) => chooseOrder(event.target.value)} sx={{ bgcolor: "#173650", color: "#fff", "& .MuiSvgIcon-root": { color: "#c3dee4" }, "& .MuiOutlinedInput-notchedOutline": { borderColor: "#4b7186" } }}>
-            <MenuItem value="">Selecione a obra antes de registrar</MenuItem>
-            {data.orders.map((o) => <MenuItem key={o.id} value={o.id}>{o.title}{o.customer ? ` · ${o.customer}` : ""}</MenuItem>)}
-          </Select>
-        )}
-        {selected && <Typography variant="caption" sx={{ color: "#97b5c5" }}>{selected.id === "warehouse" ? "Registros do almoxarifado" : "OS vinculada: " + selected.title + " · " + selected.status}</Typography>}
-        {data.assignmentProblem && <Alert severity="warning">{data.assignmentProblem}</Alert>}
-      </Box>
-      <Box ref={timeline} role="log" aria-live="polite" aria-label="Transcrições e registros da obra" sx={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", px: { xs: 1.5, md: 4 }, py: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
-        {!orderId && <Box sx={{ mt: "auto", mb: "auto", textAlign: "center", opacity: 0.75 }}><MicRoundedIcon sx={{ fontSize: 62, color: "#75e5ad" }} /><Typography variant="h6">{data.locked ? "Aguardando atribuição de obra" : "Escolha uma obra"}</Typography><Typography variant="body2">Grave, digite ou envie fotos e vídeos. O registro seguirá a obra vinculada ao seu perfil.</Typography></Box>}
-        {!!orderId && data.entries.length === 0 && <Typography sx={{ m: "auto", color: "#b0c9d8", textAlign: "center" }}>Nenhum relato nesta obra. Inicie a gravação para documentar o serviço.</Typography>}
-        {data.entries.map((entry) => (
-          <Box key={entry.id} sx={{ ml: "auto", width: "fit-content", maxWidth: "min(92%, 760px)", px: 2, py: 1.5, bgcolor: "#18463e", borderRadius: "16px 16px 4px 16px", boxShadow: "0 4px 14px #0002", overflowWrap: "anywhere" }}>
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.4 }}><Chip size="small" label={entry.title} sx={{ bgcolor: "#246655", color: "#eef" }}/><Typography variant="caption" sx={{ color: "#aac9c2" }}>{new Date(entry.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</Typography></Stack>
-            <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{entry.content}</Typography>
-            {entry.attachment && <Button href={entry.attachment.storagePath.startsWith("campo/") ? `/api/campo/midia/${entry.attachment.id}` : `/api/whatsapp/media/${entry.attachment.id}`} target="_blank" rel="noopener noreferrer" size="small" startIcon={<DownloadRoundedIcon />} sx={{ mt: 1, color: "#a4e2cd" }}>Abrir arquivo original</Button>}
-          </Box>
-        ))}
-        {data.reports.slice(-1).map((report) => <Box key={report.id} sx={{ bgcolor: "#1c3049", border: "1px solid #516f84", borderRadius: 3, p: 2, whiteSpace: "pre-wrap" }}><Typography fontWeight={800} sx={{ color: "#a2e4ca", mb: 1 }}>Relatório da IA</Typography><Typography variant="body2">{report.content}</Typography></Box>)}
-      </Box>
-      {(error || notice) && <Box sx={{ flexShrink: 0, px: 2, pb: 0.5 }}>{error && <Alert severity="error" onClose={() => setError("")}>{error}</Alert>}{notice && !error && <Typography sx={{ textAlign: "center", color: "#afe9cd", fontSize: 12 }}>{notice}</Typography>}</Box>}
-      <Box sx={{ flexShrink: 0, bgcolor: "#0c2138", borderTop: "1px solid #305066", px: { xs: 1.5, sm: 3 }, pt: 1.3, pb: "max(12px, env(safe-area-inset-bottom))" }}>
-        {recording && <Stack direction="row" spacing={1} alignItems="center" justifyContent="center" sx={{ mb: 1 }}><Box sx={{ height: 10, width: 10, bgcolor: "#ff4d58", borderRadius: "50%", animation: "campo-pulse 1.1s infinite" }}/><Typography fontWeight={700} sx={{ color: "#ffb1b8" }}>Gravando e transcrevendo a cada 15 segundos</Typography></Stack>}
-        <Stack direction="row" alignItems="flex-end" gap={0.7}>
-          <Box sx={{ flex: 1, minWidth: 0 }}><TextField fullWidth multiline maxRows={3} size="small" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={!orderId || recording || finalizing || busy} placeholder="Escreva seu relato da obra..." sx={{ "& .MuiOutlinedInput-root": { bgcolor: "#193a52", color: "white", borderRadius: 3 }, "& textarea::placeholder": { color: "#b9cbd7", opacity: 1 } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitText(); } }} /></Box>
-          <IconButton aria-label="Enviar mensagem" disabled={!draft.trim() || !orderId || recording || finalizing || busy} onClick={() => void submitText()} sx={{ bgcolor: "#148865", color: "white", "&:hover": { bgcolor: "#187a60" }, "&.Mui-disabled": { bgcolor: "#223c48", color: "#69828a" } }}><SendRoundedIcon /></IconButton>
+          <IconButton aria-label={recording ? "Parar gravação" : draft.trim() ? "Enviar mensagem" : "Gravar comando de voz"}
+            disabled={!orderId || busy || finalizing}
+            onClick={() => { if (draft.trim() && !recording) void submitText(); else void toggleRecording(); }}
+            sx={{
+              width: 46, height: 46, borderRadius: "50%", bgcolor: recording ? "#cf4e53" : colors.accent,
+              color: "#fff", flexShrink: 0,
+              "&:hover": { bgcolor: recording ? "#bc353a" : "#087655" },
+              "&.Mui-disabled": { bgcolor: colors.border, color: colors.muted },
+            }}>
+            {recording ? <StopRoundedIcon /> : draft.trim() ? <SendRoundedIcon /> : <MicRoundedIcon />}
+          </IconButton>
         </Stack>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ pt: 1.1 }} gap={1}>
-          <Stack direction="row" spacing={0.4}>
-            <IconButton aria-label="Enviar foto" disabled={!orderId || recording || finalizing || busy || pending > 0} onClick={() => photoInput.current?.click()} sx={{ color: "#b7d4d9" }}><CameraAltRoundedIcon /></IconButton>
-            <IconButton aria-label="Enviar vídeo" disabled={!orderId || recording || finalizing || busy || pending > 0} onClick={() => videoInput.current?.click()} sx={{ color: "#b7d4d9" }}><VideocamRoundedIcon /></IconButton>
-            <IconButton aria-label="Gerar relatório IA" disabled={!orderId || orderId === "warehouse" || recording || finalizing || busy || pending > 0} onClick={() => void generateReport()} sx={{ color: "#b7d4d9" }}><AutoAwesomeRoundedIcon /></IconButton>
-          </Stack>
-          <Button variant="contained" color={recording ? "error" : "success"} disabled={busy || finalizing || (!orderId && !recording)} onClick={() => void toggleRecording()} startIcon={recording ? <StopRoundedIcon /> : <MicRoundedIcon />} sx={{ borderRadius: 9, px: { xs: 2, sm: 3 }, py: 1.2, fontWeight: 850, minWidth: 142 }}>
-            {recording ? "PARAR" : "GRAVAR"}
+        {pending > 0 || busy || finalizing ? <Typography sx={{ mt: 0.6, color: colors.muted, fontSize: 11, textAlign: "center" }}>
+          <CircularProgress size={10} sx={{ mr: 0.6, color: colors.accent }} /> Salvando e processando...
+        </Typography> : null}
+      </Box>
+      <Menu anchorEl={attachmentAnchor} open={Boolean(attachmentAnchor)} onClose={() => setAttachmentAnchor(null)}
+        PaperProps={{ sx: { bgcolor: colors.dialog, color: colors.text, borderRadius: 3, minWidth: 225, border: `1px solid ${colors.border}` } }}>
+        <MenuItem onClick={() => { setAttachmentAnchor(null); photoInput.current?.click(); }}><ImageRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Foto da obra</MenuItem>
+        <MenuItem onClick={() => { setAttachmentAnchor(null); videoInput.current?.click(); }}><VideocamRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Vídeo da obra</MenuItem>
+        <MenuItem onClick={() => { setAttachmentAnchor(null); receiptCameraInput.current?.click(); }}><CameraAltRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Fotografar comprovante</MenuItem>
+        <MenuItem onClick={() => { setAttachmentAnchor(null); receiptFileInput.current?.click(); }}><ReceiptLongRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Enviar comprovante / PDF</MenuItem>
+        {orderId !== "office" && orderId !== "warehouse" && <MenuItem onClick={() => { setAttachmentAnchor(null); void generateReport(); }}><AutoAwesomeRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Gerar relatório da obra</MenuItem>}
+      </Menu>
+      <input ref={cameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden
+        onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file, "image"); }} />
+      <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden
+        onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file, "image"); }} />
+      <input ref={videoInput} type="file" accept="video/mp4,video/webm,video/quicktime" hidden
+        onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file, "video"); }} />
+      <input ref={receiptFileInput} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden
+        onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; selectReceipt(file); }} />
+      <input ref={receiptCameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden
+        onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; selectReceipt(file); }} />
+
+      <Dialog open={receiptOpen} onClose={busy || dictating ? undefined : () => { setReceiptOpen(false); setReceiptFile(null); }}
+        fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: colors.dialog, color: colors.text, borderRadius: 3 } }}>
+        <DialogTitle sx={{ fontWeight: 850, display: "flex", alignItems: "center", gap: 1 }}>
+          <ReceiptLongRoundedIcon sx={{ color: colors.accent }}/> Comprovante para o financeiro
+        </DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: colors.muted, fontSize: 13, mb: 1.5 }}>
+            {receiptFile?.name || "Documento"} · Será salvo como pendente de conferência, sem movimentar o caixa automaticamente.
+          </Typography>
+          <TextField fullWidth multiline minRows={3} maxRows={6} value={receiptDescription}
+            onChange={(event) => setReceiptDescription(event.target.value)}
+            placeholder="Descreva o comprovante. Você também pode ditar a descrição."
+            disabled={busy || dictating} InputProps={{ sx: { color: colors.text, bgcolor: colors.input } }}
+            sx={{ "& .MuiOutlinedInput-notchedOutline": { borderColor: colors.border },
+              "& textarea::placeholder": { color: colors.muted, opacity: 1 } }}
+          />
+          <Button startIcon={dictating ? <StopRoundedIcon /> : <MicRoundedIcon />}
+            onClick={() => void toggleDictation()} disabled={busy}
+            color={dictating ? "error" : "success"} variant="outlined" sx={{ mt: 1.5 }}>
+            {dictating ? "Parar ditado" : "Ditar descrição"}
           </Button>
-          {pending > 0 || busy ? <CircularProgress size={20} sx={{ color: "#91d9be" }}/> : <Box sx={{ width: 20 }}/>}
+          {dictating && <Typography sx={{ color: colors.muted, fontSize: 12, mt: 1 }}>Diga o fornecedor, a finalidade, o valor se souber e a obra. O áudio será transcrito no campo acima.</Typography>}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button sx={{ color: colors.muted }} disabled={busy || dictating} onClick={() => { setReceiptOpen(false); setReceiptFile(null); }}>Cancelar</Button>
+          <Button variant="contained" color="success" disabled={!receiptFile || !receiptDescription.trim() || busy || dictating}
+            onClick={() => void sendReceipt()}>{busy ? "Salvando..." : "Enviar ao financeiro"}</Button>
+        </DialogActions>
+      </Dialog>
+      <Drawer anchor="right" open={staffOpen} onClose={() => setStaffOpen(false)}
+        PaperProps={{ sx: { width: "min(100vw, 460px)", bgcolor: colors.dialog, color: colors.text, p: 2, overflow: "auto" } }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography fontWeight={850} variant="h6">Faltas e saídas antecipadas</Typography>
+          <IconButton aria-label="Fechar ocorrências" sx={{ color: colors.text }} onClick={() => setStaffOpen(false)}><CloseRoundedIcon /></IconButton>
         </Stack>
-        <Box sx={{ mt: 1 }}><TextField fullWidth size="small" value={caption} onChange={(e) => setCaption(e.target.value)} disabled={recording || busy} placeholder="Descrição opcional para a próxima foto ou vídeo..." sx={{ "& .MuiOutlinedInput-root": { fontSize: 12, bgcolor: "#112b40", color: "#e1f5ee" }, "& input::placeholder": { color: "#87a7b6", opacity: 1 } }} /></Box>
-        <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadFile(f, "image"); }}/>
-        <input ref={videoInput} type="file" accept="video/mp4,video/webm,video/quicktime" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadFile(f, "video"); }}/>
-      </Box>
-      <Drawer anchor="right" open={warehouseOpen} onClose={() => setWarehouseOpen(false)}
-        PaperProps={{ sx: { width: "min(100vw, 450px)", bgcolor: "#0d253c", color: "#f3fff8", p: 2, overflow: "auto" } }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
-          <Typography variant="h6" fontWeight={850}>Movimentos do almoxarifado</Typography>
-          <IconButton aria-label="Fechar histórico do estoque" onClick={() => setWarehouseOpen(false)} sx={{ color: "#e9f6ed" }}><CloseRoundedIcon /></IconButton>
-        </Stack>
-        <Typography sx={{ color: "#aac4d2", fontSize: 13, mb: 2 }}>Retiradas, entradas e devoluções registradas por voz, sem alterar a obra ativa do seu perfil.</Typography>
-        <Stack gap={1.2}>
-          {!data.warehouseJournal?.length && <Typography sx={{ color: "#aac4d2" }}>Nenhum movimento registrado pelo assistente.</Typography>}
-          {data.warehouseJournal?.slice(-50).reverse().map((entry) => (
-            <Box key={entry.id} sx={{ bgcolor: "#173b49", borderRadius: 2, p: 1.5 }}>
-              <Typography fontWeight={700} sx={{ fontSize: 13, mb: 0.6 }}>{entry.authorName} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</Typography>
-              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{entry.content}</Typography>
-            </Box>
-          ))}
-        </Stack>
+        <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Ocorrências informadas por voz, sem descontos ou punições automáticas.</Typography>
+        {!staffReports.length && <Typography sx={{ color: colors.muted }}>Nenhuma ocorrência acessível ao seu perfil.</Typography>}
+        <Stack gap={1.3}>{staffReports.map((report) => <Box key={report.id} sx={{ bgcolor: colors.incoming, p: 2, borderRadius: 2 }}>
+          <Typography fontWeight={750}>{report.employeeName} · {report.kind === "ABSENCE" ? "Falta informada" : "Saída antecipada"}</Typography>
+          <Typography sx={{ color: colors.muted, fontSize: 12 }}>{report.occurredOn}{report.occurredAt ? " às " + report.occurredAt : ""} · {report.reportedByName}</Typography>
+          {report.description && <Typography sx={{ fontSize: 13, mt: 0.6, whiteSpace: "pre-wrap" }}>{report.description}</Typography>}
+        </Box>)}</Stack>
       </Drawer>
-      <style>{`@keyframes campo-pulse{0%,100%{opacity:1}50%{opacity:.28}}`}</style>
+      <Drawer anchor="right" open={financeOpen} onClose={() => setFinanceOpen(false)}
+        PaperProps={{ sx: { width: "min(100vw, 480px)", bgcolor: colors.dialog, color: colors.text, p: 2, overflow: "auto" } }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography variant="h6" fontWeight={850}>Comprovantes do financeiro</Typography>
+          <IconButton aria-label="Fechar comprovantes" sx={{ color: colors.text }} onClick={() => setFinanceOpen(false)}><CloseRoundedIcon /></IconButton>
+        </Stack>
+        <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Documentos recebidos pelo PWA, aguardando conferência contábil.</Typography>
+        {!financeReceipts.length && <Typography sx={{ color: colors.muted }}>Nenhum documento para conferir.</Typography>}
+        <Stack gap={1.3}>{financeReceipts.slice(0, 80).map((doc) => <Box key={doc.id} sx={{ p: 1.5, borderRadius: 2, bgcolor: colors.incoming }}>
+          <Typography fontWeight={750} sx={{ overflowWrap: "anywhere" }}>{doc.fileName}</Typography>
+          <Typography sx={{ color: colors.muted, fontSize: 11 }}>{doc.uploadedByName} · {new Date(doc.createdAt).toLocaleString("pt-BR")} · {doc.status === "REVIEWED" ? "Conferido" : "Pendente"}</Typography>
+          <Typography sx={{ fontSize: 13, whiteSpace: "pre-wrap", mt: 0.5 }}>{doc.description || "Sem descrição"}</Typography>
+          <Button size="small" sx={{ color: colors.accent, mt: 0.5 }} target="_blank"
+            href={`/api/finance/campo-comprovantes/${doc.id}`}>Abrir documento</Button>
+        </Box>)}</Stack>
+      </Drawer>
+      <Drawer anchor="right" open={warehouseOpen} onClose={() => setWarehouseOpen(false)}
+        PaperProps={{ sx: { width: "min(100vw, 450px)", bgcolor: colors.dialog, color: colors.text, p: 2, overflow: "auto" } }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography variant="h6" fontWeight={850}>Movimentos do almoxarifado</Typography>
+          <IconButton aria-label="Fechar almoxarifado" onClick={() => setWarehouseOpen(false)} sx={{ color: colors.text }}><CloseRoundedIcon /></IconButton>
+        </Stack>
+        <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Registros de entradas, retiradas, devoluções e equipamentos.</Typography>
+        {!data.warehouseJournal?.length && <Typography sx={{ color: colors.muted }}>Nenhum movimento recente.</Typography>}
+        <Stack gap={1.2}>{data.warehouseJournal?.slice(-60).reverse().map((entry) => <Box key={entry.id} sx={{ bgcolor: colors.incoming, borderRadius: 2, p: 1.5 }}>
+          <Typography fontWeight={750} sx={{ fontSize: 12 }}>{entry.authorName} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</Typography>
+          <Typography sx={{ fontSize: 13, whiteSpace: "pre-wrap", mt: 0.5 }}>{entry.content}</Typography>
+        </Box>)}</Stack>
+      </Drawer>
+      <style>{`@keyframes campo-pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
     </Box>
   );
 }

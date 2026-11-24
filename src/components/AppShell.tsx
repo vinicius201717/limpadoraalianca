@@ -88,7 +88,7 @@ const menuItems = [
 
 function canSeeMenuItem(href: string, user: Pick<SessionUser, "role" | "canViewFinancials">, hasAssignedServiceOrders = false) {
   const role = user.role;
-  if (href === "/campo") return true;
+  if (href === "/campo") return role !== "COLABORADOR";
   if (href === "/feedback-empresa") return true;
   if (role === "ALMOXARIFADO") {
     if (href === "/ordens-servico") return hasAssignedServiceOrders;
@@ -339,7 +339,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
               }}
             />
 
-            {user && <Tooltip title="Assistente de Campo"><IconButton component={Link} href="/campo" aria-label="Abrir Assistente de Campo" sx={{ color: "success.main" }}><MicRoundedIcon /></IconButton></Tooltip>}
+            {user && user.role !== "COLABORADOR" && <Tooltip title="Assistente de Campo"><IconButton component={Link} href="/campo" aria-label="Abrir Assistente de Campo" sx={{ color: "success.main" }}><MicRoundedIcon /></IconButton></Tooltip>}
             <Tooltip title={mode === "light" ? "Tema escuro" : "Tema claro"}>
               <IconButton aria-label="Alternar tema" onClick={toggleColorMode}>
                 {mode === "light" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}
