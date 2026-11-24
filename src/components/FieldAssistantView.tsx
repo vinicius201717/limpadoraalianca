@@ -9,6 +9,7 @@ import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import VideocamRoundedIcon from "@mui/icons-material/VideocamRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
+import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
@@ -121,6 +122,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const [warehouseOpen, setWarehouseOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<FieldColor>("dark");
   const [attachmentAnchor, setAttachmentAnchor] = useState<HTMLElement | null>(null);
+  const [headerAnchor, setHeaderAnchor] = useState<HTMLElement | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptDescription, setReceiptDescription] = useState("");
@@ -492,34 +494,36 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     }}>
       {/* WhatsApp-like compact messenger header, with Aliança colours and own branding. */}
       <Box sx={{
-        display: "flex", alignItems: "center", gap: 1.2,
-        px: { xs: 1.5, sm: 2.5 }, py: 1.2, flexShrink: 0,
+        display: "flex", alignItems: "center", gap: 0.9,
+        px: { xs: 1.5, sm: 2.5 }, py: 0.9, minHeight: 60, flexShrink: 0,
         bgcolor: colors.header, borderBottom: `1px solid ${colors.border}`,
       }}>
-        <Box sx={{
-          display: "grid", placeItems: "center", bgcolor: colors.accent, color: "#fff",
-          height: { xs: 43, sm: 48 }, width: { xs: 43, sm: 48 }, borderRadius: "50%",
-          boxShadow: "0 1px 7px #0002", flexShrink: 0,
-        }}><MicRoundedIcon sx={{ fontSize: 26 }} /></Box>
+        <Box role="img" aria-label="Logo da Alianca" sx={{
+          width: { xs: 42, sm: 48 }, height: { xs: 42, sm: 48 },
+          borderRadius: "50%", flexShrink: 0, bgcolor: "#f4fafb",
+          backgroundImage: "url(/campo-notification-round.png)", backgroundSize: "cover",
+          backgroundPosition: "center", boxShadow: "0 1px 5px #0002",
+        }}/>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography fontWeight={850} sx={{ fontSize: { xs: 16, sm: 18 }, lineHeight: 1.2, color: colors.text }}>
+          <Typography noWrap fontWeight={850} sx={{ fontSize: { xs: 17, sm: 18 }, lineHeight: 1.25, color: colors.text }}>
             Aliança Campo
           </Typography>
-          <Typography variant="caption" sx={{ display: "block", color: colors.muted }} noWrap>
+          <Typography variant="caption" sx={{ display: "block", color: colors.muted, lineHeight: 1.4 }} noWrap>
             {recording ? "Gravando mensagem de voz..." : finalizing ? "Organizando registro..." : userName + " · registro operacional"}
           </Typography>
         </Box>
         {!!data.user.id && <FieldNotifications key={data.user.id} userId={data.user.id} color={colors.text} onChoose={id=>{if(data.orders.some(o=>o.id===id)&&orderRef.current!==id)chooseOrder(id);}}/>}
-        {canStaff && <IconButton size="small" onClick={() => void openStaff()} title="Ocorrências da equipe" aria-label="Ver faltas e saídas antecipadas"
-          sx={{ color: colors.text }}><PeopleAltRoundedIcon /></IconButton>}
-        {canFinance && <IconButton size="small" onClick={() => void openFinance()} aria-label="Ver comprovantes do financeiro"
-          sx={{ color: colors.text }}><ReceiptLongRoundedIcon /></IconButton>}
-        {["OWNER", "GERENTE", "ALMOXARIFADO"].includes(data.user.role) && <IconButton size="small" onClick={() => void openWarehouse()}
-          title="Movimentos do almoxarifado" aria-label="Ver almoxarifado" sx={{ color: colors.text }}><Inventory2RoundedIcon /></IconButton>}
-        <IconButton size="small" onClick={changeTheme} aria-label={themeMode === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
-          sx={{ color: colors.text }}>{themeMode === "dark" ? <LightModeRoundedIcon /> : <DarkModeRoundedIcon />}</IconButton>
-        <IconButton size="small" onClick={() => void load(orderRef.current).catch((e) => setError(e.message))}
-          aria-label="Atualizar histórico" sx={{ color: colors.text }}><ReplayRoundedIcon /></IconButton>
+        <IconButton aria-label="Mais opções" title="Mais opções" aria-haspopup="menu" aria-expanded={Boolean(headerAnchor)} aria-controls={headerAnchor ? "campo-header-menu" : undefined}
+          onClick={event=>setHeaderAnchor(event.currentTarget)} sx={{color:colors.text,flexShrink:0,p:0.75}}><MoreVertRoundedIcon/></IconButton>
+        <Menu id="campo-header-menu" anchorEl={headerAnchor} open={Boolean(headerAnchor)} onClose={()=>setHeaderAnchor(null)}
+          anchorOrigin={{vertical:"bottom",horizontal:"right"}} transformOrigin={{vertical:"top",horizontal:"right"}}
+          sx={{zIndex:1800}} slotProps={{paper:{sx:{bgcolor:colors.dialog,color:colors.text,border:"1px solid "+colors.border,borderRadius:2,minWidth:220,"& .MuiMenuItem-root":{gap:1.5,py:1.25,fontSize:14}}}}}>
+          {canStaff && <MenuItem onClick={()=>{setHeaderAnchor(null);void openStaff();}}><PeopleAltRoundedIcon fontSize="small"/>Ocorrências da equipe</MenuItem>}
+          {canFinance && <MenuItem onClick={()=>{setHeaderAnchor(null);void openFinance();}}><ReceiptLongRoundedIcon fontSize="small"/>Comprovantes financeiros</MenuItem>}
+          {["OWNER","GERENTE","ALMOXARIFADO"].includes(data.user.role) && <MenuItem onClick={()=>{setHeaderAnchor(null);void openWarehouse();}}><Inventory2RoundedIcon fontSize="small"/>Almoxarifado</MenuItem>}
+          <MenuItem onClick={()=>{setHeaderAnchor(null);changeTheme();}}>{themeMode==="dark"?<LightModeRoundedIcon fontSize="small"/>:<DarkModeRoundedIcon fontSize="small"/>}{themeMode==="dark"?"Ativar tema claro":"Ativar tema escuro"}</MenuItem>
+          <MenuItem onClick={()=>{setHeaderAnchor(null);void load(orderRef.current).catch(e=>setError(e.message));}}><ReplayRoundedIcon fontSize="small"/>Atualizar histórico</MenuItem>
+        </Menu>
       </Box>
       <Box sx={{
         flexShrink: 0, bgcolor: colors.bar, px: { xs: 1.5, sm: 3 }, py: 1.05,

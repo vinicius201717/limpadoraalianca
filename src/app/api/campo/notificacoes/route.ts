@@ -28,7 +28,7 @@ export const POST=withDatabase(async request=>{
     if(!publicKey||!privateKey||!subject)return Response.json({message:"Push ainda nao configurado."},{status:503});
     if(await consumeRateLimit("field-push-test",user.id,3,60000))return Response.json({message:"Limite de testes atingido. Aguarde um minuto."},{status:429});
     try{
-      await sendNotification({endpoint:sub.endpoint,keys:sub.keys},JSON.stringify({title:"Alianca Campo",body:"Teste de notificacao: seu celular esta conectado ao Alianca Campo.",tag:"campo-test"}),{vapidDetails:{publicKey,privateKey,subject},TTL:120,timeout:7000});
+      await sendNotification({endpoint:sub.endpoint,keys:sub.keys},JSON.stringify({title:"Alianca Campo",body:"Teste de notificação: seu celular está conectado ao Aliança Campo.",tag:"campo-test"}),{vapidDetails:{publicKey,privateKey,subject},TTL:120,timeout:7000});
       return Response.json({ok:true});
     }catch(e){
       const status=(e as {statusCode?:number}).statusCode;

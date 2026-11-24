@@ -1,6 +1,6 @@
-const VERSION = "alianca-campo-v2";
+const VERSION = "alianca-campo-v3";
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(["/campo-offline.html", "/campo-icon-192.png"])));
+  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(["/campo-offline.html", "/campo-notification-round.png", "/campo-notification-badge.png"])));
   self.skipWaiting();
 });
 self.addEventListener("activate", (event) => {
@@ -19,7 +19,7 @@ self.addEventListener("push", event => {
   let payload={};try{payload=event.data?.json()||{};}catch{}
   event.waitUntil(self.registration.showNotification("Aliança Campo",{
     body:typeof payload.body==="string"?payload.body.slice(0,180):"Você tem um novo aviso. Abra o aplicativo.",
-    icon:"/campo-icon-192.png",badge:"/campo-icon-192.png",
+    icon:"/campo-notification-round.png",badge:"/campo-notification-badge.png",
     tag:typeof payload.tag==="string"?payload.tag.slice(0,100):"campo-aviso",
     data:{url:"/campo?avisos=1"}
   }));
