@@ -25,6 +25,16 @@ export function FieldNotifications({userId,color,onChoose}:{userId:string;color:
    const json=sub.toJSON();await post({action:"subscribe",endpoint:json.endpoint,keys:json.keys});setSubscribed(true);
   }catch(e){setError(e instanceof Error?e.message:"Falha ao ativar notificações.");}finally{setBusy(false);}
  }
+ const [testSent,setTestSent]=useState(false);
+ async function testPush(){
+  setBusy(true);setError("");setTestSent(false);
+  try{
+   const r=await navigator.serviceWorker.getRegistration("/campo");
+   const sub=await r?.pushManager?.getSubscription();
+   if(!sub)throw new Error("Ative as notificacoes neste aparelho primeiro.");
+   await post({action:"test",endpoint:sub.endpoint});setTestSent(true);
+  }catch(e){setError(e instanceof Error?e.message:"Falha no teste.");}finally{setBusy(false);}
+ }
  async function disable(){
   setBusy(true);setError("");
   try{const r=await navigator.serviceWorker.getRegistration("/campo");const s=await r?.pushManager?.getSubscription();if(s){await post({action:"unsubscribe",endpoint:s.endpoint});await s.unsubscribe();}setSubscribed(false);}catch(e){setError(e instanceof Error?e.message:"Falha ao desativar.");}finally{setBusy(false);}
@@ -38,6 +48,8 @@ export function FieldNotifications({userId,color,onChoose}:{userId:string;color:
  <Typography variant="body2" color="text.secondary" sx={{my:1}}>Lembretes de obra, organização, checklist e informações importantes.</Typography>
  {error&&<Alert severity="warning" sx={{my:1}}>{error}</Alert>}
  <Button variant="contained" disabled={busy||!info.pushConfigured} onClick={()=>void enable()}>{subscribed?"Revalidar notificações neste aparelho":"Ativar notificações no celular"}</Button>
+ {subscribed&&<Button variant="outlined" disabled={busy||!info.pushConfigured} onClick={()=>void testPush()}>Enviar teste push neste aparelho</Button>}
+ {testSent&&<Alert severity="success" sx={{my:1}}>Envio aceito pelo servico push. Confira se a mensagem chegou ao aparelho.</Alert>}
  {subscribed&&<Button disabled={busy} onClick={()=>void disable()}>Desativar neste aparelho</Button>}
  {!info.pushConfigured&&<Alert severity="info" sx={{my:1}}>Avisos internos ativos. Push externo aguarda configuração.</Alert>}
  <Stack gap={1.2} sx={{mt:2}}>{info.notices.length?info.notices.map(n=><Paper variant="outlined" key={n.id} sx={{p:1.5,borderLeft: n.read?undefined:"4px solid #16805c"}}><Typography fontWeight={750}>{n.title}</Typography><Typography variant="caption" color="text.secondary">{new Date(n.createdAt).toLocaleString("pt-BR")}</Typography><Typography variant="body2" sx={{my:1}}>{n.body}</Typography><Button size="small" onClick={()=>void read(n)}>{n.kind==="FINANCE"?(n.read?"Lido":"Marcar como lido"):(n.read?"Abrir":"Ler e abrir")}</Button></Paper>):<Box color="text.secondary">Nenhum aviso no momento.</Box>}</Stack>

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { sendNotification } from "web-push";
+import { consumeRateLimit } from "@/lib/rate-limit";
 import { requireApiUser } from "@/lib/api-handlers";
 import { withDatabase } from "@/lib/with-database";
 import { fieldActor } from "@/lib/field-assistant";
@@ -8,6 +10,7 @@ const schema=z.discriminatedUnion("action",[
   z.object({action:z.literal("read"),ids:z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(100)}),
   z.object({action:z.literal("subscribe"),endpoint:z.string().max(2048).refine(isAllowedPushEndpoint),keys:z.object({p256dh:z.string().regex(/^[A-Za-z0-9_-]{87}$/),auth:z.string().regex(/^[A-Za-z0-9_-]{22}$/)})}),
   z.object({action:z.literal("unsubscribe"),endpoint:z.string().max(2048)}),
+  z.object({action:z.literal("test"),endpoint:z.string().max(2048).refine(isAllowedPushEndpoint)}),
 ]);
 export const GET=withDatabase(async request=>{
   const auth=await requireApiUser(request);if(auth.response)return auth.response;
@@ -18,7 +21,20 @@ export const POST=withDatabase(async request=>{
   const auth=await requireApiUser(request);if(auth.response)return auth.response;
   try{fieldActor(auth.user)}catch{return Response.json({message:"Sem acesso."},{status:403})}
   const input=schema.parse(await request.json());const user=auth.user;const now=new Date().toISOString();
-  if(input.action==="read"){
+  if(input.action==="test"){
+    const sub=db.fieldPushSubscriptions.find(s=>s.userId===user.id&&s.sessionVersion===(user.sessionVersion??0)&&s.endpoint===input.endpoint);
+    if(!sub)return Response.json({message:"Reative as notificacoes neste aparelho antes de testar."},{status:404});
+    const {FIELD_VAPID_PUBLIC_KEY:publicKey,FIELD_VAPID_PRIVATE_KEY:privateKey,FIELD_VAPID_SUBJECT:subject}=process.env;
+    if(!publicKey||!privateKey||!subject)return Response.json({message:"Push ainda nao configurado."},{status:503});
+    if(await consumeRateLimit("field-push-test",user.id,3,60000))return Response.json({message:"Limite de testes atingido. Aguarde um minuto."},{status:429});
+    try{
+      await sendNotification({endpoint:sub.endpoint,keys:sub.keys},JSON.stringify({title:"Alianca Campo",body:"Teste de notificacao: seu celular esta conectado ao Alianca Campo.",tag:"campo-test"}),{vapidDetails:{publicKey,privateKey,subject},TTL:120,timeout:7000});
+      return Response.json({ok:true});
+    }catch(e){
+      const status=(e as {statusCode?:number}).statusCode;
+      return Response.json({message:status===404||status===410?"Inscricao expirada. Desative e reative as notificacoes.":"O servico de push recusou o envio. Confira a configuracao."},{status:502});
+    }
+  }else if(input.action==="read"){
     const allowed=new Set(fieldNotices(user).map(n=>n.id));
     db.fieldNoticeReads=db.fieldNoticeReads.filter(r=>Date.parse(r.at)>Date.now()-30*86400000);
     for(const id of input.ids)if(allowed.has(id)&&!db.fieldNoticeReads.some(r=>r.id===id&&r.userId===user.id))db.fieldNoticeReads.push({id,userId:user.id,at:now});
