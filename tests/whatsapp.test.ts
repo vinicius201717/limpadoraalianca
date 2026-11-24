@@ -99,7 +99,8 @@ test("local media configuration works without Supabase and rejects ephemeral or 
 
 test("link is single-use, expires, requires eligible account and revokes with session", async () => {
   await assistantTransaction(() => {
-    assert.throws(() => createLink({ ...collaborator, isActive: false }));
+    assert.throws(() => createLink(collaborator), /não tem acesso/);
+    assert.throws(() => createLink(finance), /não tem acesso/);
     const link = createLink(owner); assert.equal(db.whatsappLinks[0].tokenHash, digest(link.token));
     assert.ok(!JSON.stringify(db.whatsappLinks).includes(link.token));
     consumeLink(phone, link.token); assert.equal(actorForPhone(phone)?.id, owner.id);
@@ -107,28 +108,32 @@ test("link is single-use, expires, requires eligible account and revokes with se
     db.users[0].sessionVersion = 1; assert.equal(actorForPhone(phone), null);
     const expired = createLink(supervisor); db.whatsappLinks.find((entry) => entry.userId === supervisor.id)!.tokenExpiresAt = "2000-01-01";
     assert.throws(() => consumeLink("5511888888888", expired.token));
-    const workerLink = createLink(collaborator);
-    consumeLink("5511777777777", workerLink.token);
-    assert.equal(actorForPhone("5511777777777")?.id, collaborator.id);
+    const warehouse = { ...owner, id: "warehouse", role: "ALMOXARIFADO" as const };
+    db.users.push(warehouse);
+    const warehouseLink = createLink(warehouse);
+    consumeLink("5511777777777", warehouseLink.token);
+    assert.equal(actorForPhone("5511777777777")?.id, warehouse.id);
   });
 });
-test("every active account can open its own assistant, without expanding operational permissions", async () => {
-  assert.ok(["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO", "COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"].every((role) => canUseWhatsApp(role as typeof owner.role)));
+test("only owner, manager, supervisor and warehouse can use assistant, without expanding operational permissions", async () => {
+  assert.ok(["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO"].every((role) => canUseWhatsApp(role as typeof owner.role)));
+  assert.ok(["COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"].every((role) => !canUseWhatsApp(role as typeof owner.role)));
   await assistantTransaction(() => {
-    assert.equal(assistantContext(collaborator).orders.length, 1);
-    assert.throws(() => validateIntent(collaborator, intent()), /não pode criar tarefas/);
-    assert.throws(() => validateIntent(collaborator, intent({ action: "ASSIGN_CHECKLIST" })), /não pode criar tarefas/);
-    assert.throws(() => validateIntent(collaborator, intent({ action: "WARN_EMPLOYEE" })), /não pode criar tarefas/);
-    assert.equal(validateIntent(collaborator, intent({ action: "DIARY" })).action, "DIARY");
+    assert.throws(() => assistantContext(collaborator), /não tem acesso/);
+    db.whatsappLinks.push({ userId: collaborator.id, phone: "5511666666666", sessionVersion: 0 });
+    assert.equal(actorForPhone("5511666666666"), null);
+    assert.equal(whatsappProfileStatus(collaborator, db.whatsappLinks).linked, false);
+    assert.throws(() => validateIntent(collaborator, intent()), /não tem acesso/);
+    assert.throws(() => validateIntent(collaborator, intent({ action: "DIARY" })), /não tem acesso/);
     const warehouse = { ...owner, id: "warehouse", role: "ALMOXARIFADO" as const };
     db.users.push(warehouse);
     assert.equal(assistantContext(warehouse).orders.length, 0);
-    assert.equal(whatsappProfileStatus(collaborator, db.whatsappLinks).linked, false);
-    const link = createLink(collaborator);
+    assert.equal(whatsappProfileStatus(warehouse, db.whatsappLinks).linked, false);
+    const link = createLink(warehouse);
     consumeLink("5511777777777", link.token);
-    assert.deepEqual(whatsappProfileStatus(collaborator, db.whatsappLinks), { linked: true, maskedPhone: "•••• 7777" });
-    db.users.find((entry) => entry.id === collaborator.id)!.sessionVersion = 1;
-    assert.equal(whatsappProfileStatus(db.users.find((entry) => entry.id === collaborator.id), db.whatsappLinks).linked, false);
+    assert.deepEqual(whatsappProfileStatus(warehouse, db.whatsappLinks), { linked: true, maskedPhone: "•••• 7777" });
+    db.users.find((entry) => entry.id === warehouse.id)!.sessionVersion = 1;
+    assert.equal(whatsappProfileStatus(db.users.find((entry) => entry.id === warehouse.id), db.whatsappLinks).linked, false);
   });
 });
 
@@ -159,7 +164,7 @@ test("finance cannot create tasks and manager needs explicit financial permissio
   await assistantTransaction(() => {
     assert.throws(() => validateIntent(finance, intent()));
     assert.throws(() => validateIntent(manager, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), receipt));
-    assert.equal(assistantContext(finance).checklist.length, 0); assert.equal(assistantContext(finance).employees.length, 0);
+    assert.throws(() => assistantContext(finance), /não tem acesso/);
   });
 });
 test("expired and revoked authorizations cannot be confirmed", async () => {
@@ -194,28 +199,28 @@ test("internal warnings require confirmation and are hidden from finance", async
   await assistantTransaction(() => {
     const command = proposeCommand(supervisor, phone, intent({ action: "WARN_EMPLOYEE", details: "Atraso relatado de 30 minutos" }), "warn", "Atraso");
     assert.equal(db.employeeWarnings.length, 0); confirmCommand(supervisor, phone, command.code);
-    assert.equal(db.employeeWarnings.length, 1); assert.equal(visibleHistory(finance, "a").length, 0);
+    assert.equal(db.employeeWarnings.length, 1); assert.throws(() => visibleHistory(finance, "a"), /não tem acesso/);
     assert.equal(visibleHistory(supervisor, "a").length, 1);
     assert.throws(() => validateIntent(supervisor, intent({ action: "WARN_EMPLOYEE", employeeId: "sup-employee" })));
   });
 });
 test("archiving receipts never adjusts balances and duplicate attachments are rejected", async () => {
   await assistantTransaction(() => {
-    const command = proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), "receipt", "Arquivar", receipt);
-    confirmCommand(finance, phone, command.code);
+    const command = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), "receipt", "Arquivar", receipt);
+    confirmCommand(owner, phone, command.code);
     assert.equal(db.financialDocuments.length, 1); assert.equal(db.serviceOrders[0].expenses, 0); assert.equal(db.servicePayments[0].receipts.length, 0);
     assert.equal(visibleHistory(supervisor, "a").length, 0);
-    assert.throws(() => proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), "again", "Arquivar", receipt), /já foi registrado/);
+    assert.throws(() => proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), "again", "Arquivar", receipt), /já foi registrado/);
   });
 });
 test("expense and receipt post to existing financial ledgers only after confirmation", async () => {
   await assistantTransaction(() => {
-    const command = proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "EXPENSE", amount: 25.5, paidAt: "2026-01-02", expenseCategory: "MATERIAL_OU_PRODUTO" }), "exp", "Lançar", receipt);
-    assert.equal(db.serviceOrders[0].expenses, 0); confirmCommand(finance, phone, command.code);
+    const command = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "EXPENSE", amount: 25.5, paidAt: "2026-01-02", expenseCategory: "MATERIAL_OU_PRODUTO" }), "exp", "Lançar", receipt);
+    assert.equal(db.serviceOrders[0].expenses, 0); confirmCommand(owner, phone, command.code);
     assert.equal(db.serviceOrders[0].expenses, 25.5); assert.equal(db.serviceExpenses[0].amount, 25.5);
-    const payment = proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "PAYMENT", amount: 40, paymentId: "payment", paidAt: "2026-01-02", paymentMethod: "PIX" }), "payment", "Receber", { ...receipt, id: "b".repeat(64) });
-    confirmCommand(finance, phone, payment.code); assert.equal(db.servicePayments[0].receipts[0].amount, 40);
-    assert.throws(() => validateIntent(finance, intent({ action: "FILE_RECEIPT", financialDirection: "PAYMENT", amount: 70, paymentId: "payment", paidAt: "2026-01-02", paymentMethod: "PIX" }), { ...receipt, id: "c".repeat(64) }), /saldo/);
+    const payment = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "PAYMENT", amount: 40, paymentId: "payment", paidAt: "2026-01-02", paymentMethod: "PIX" }), "payment", "Receber", { ...receipt, id: "b".repeat(64) });
+    confirmCommand(owner, phone, payment.code); assert.equal(db.servicePayments[0].receipts[0].amount, 40);
+    assert.throws(() => validateIntent(owner, intent({ action: "FILE_RECEIPT", financialDirection: "PAYMENT", amount: 70, paymentId: "payment", paidAt: "2026-01-02", paymentMethod: "PIX" }), { ...receipt, id: "c".repeat(64) }), /saldo/);
   });
 });
 test("diary preserves source transcript and is idempotent", async () => {
@@ -326,28 +331,28 @@ test("delivery failure retries only the reply, not the committed business action
 test("report prompt contains only accessible history and saves source references", async () => {
   await assistantTransaction(() => {
     saveDiary(supervisor, intent({ action: "DIARY", details: "Piso preparado" }), "diary", "Original");
-    const command = proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE", details: "SEGREDO_FINANCEIRO" }), "receipt", "Confidencial", receipt); confirmCommand(finance, phone, command.code);
+    const command = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE", details: "SEGREDO_FINANCEIRO" }), "receipt", "Confidencial", receipt); confirmCommand(owner, phone, command.code);
   });
   reportMode = true; const report = await createWorkReport(supervisor.id, "a");
   assert.ok(report.sourceIds.length >= 2); assert.ok(!prompts[0].includes("SEGREDO_FINANCEIRO")); assert.ok(!prompts[0].includes('"revenue"'));
   await assert.rejects(createWorkReport(supervisor.id, "b"));
 });
 test("private financial attachment cannot be downloaded by supervisor", async () => {
-  await assistantTransaction(() => { const command = proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), "receipt", "Arquivar", receipt); confirmCommand(finance, phone, command.code); });
+  await assistantTransaction(() => { const command = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE" }), "receipt", "Arquivar", receipt); confirmCommand(owner, phone, command.code); });
   const { GET } = await import("../src/app/api/whatsapp/media/[id]/route");
   assert.equal((await GET(request(`/api/whatsapp/media/${receipt.id}`, supervisor), { params: Promise.resolve({ id: receipt.id }) })).status, 404);
-  const response = await GET(request(`/api/whatsapp/media/${receipt.id}`, finance), { params: Promise.resolve({ id: receipt.id }) });
+  const response = await GET(request(`/api/whatsapp/media/${receipt.id}`, owner), { params: Promise.resolve({ id: receipt.id }) });
   assert.equal(response.status, 200); assert.match(response.headers.get("content-disposition")!, /attachment/);
 });
 
 test("a receipt without caption remains available for a later audio explanation", async () => {
   nextIntent = intent({ action: "CLARIFY", question: "A qual obra pertence este comprovante?" });
-  await assistantTransaction(() => { consumeLink(phone, createLink(finance).token); enqueueWhatsAppMessages([incoming("document", "", { type: "document", attachment: receipt })]); });
+  await assistantTransaction(() => { consumeLink(phone, createLink(owner).token); enqueueWhatsAppMessages([incoming("document", "", { type: "document", attachment: receipt })]); });
   await drainWhatsAppQueue();
   nextIntent = intent({ action: "FILE_RECEIPT", employeeId: null, financialDirection: "ARCHIVE", title: "Comprovante de material", details: "Compra de material da obra a." });
   await assistantTransaction(() => enqueueWhatsAppMessages([incoming("explanation", "", { type: "audio", mediaId: "media", mimeType: "audio/ogg" })]));
   await drainWhatsAppQueue();
-  await assistantTransaction(() => { assert.equal(db.assistantCommands.length, 1); assert.equal(db.assistantCommands[0].attachment?.id, receipt.id); assert.equal(db.financialDocuments.length, 0); confirmCommand(finance, phone, db.assistantCommands[0].code); assert.equal(db.financialDocuments[0].attachment.id, receipt.id); });
+  await assistantTransaction(() => { assert.equal(db.assistantCommands.length, 1); assert.equal(db.assistantCommands[0].attachment?.id, receipt.id); assert.equal(db.financialDocuments.length, 0); confirmCommand(owner, phone, db.assistantCommands[0].code); assert.equal(db.financialDocuments[0].attachment.id, receipt.id); });
   assert.equal(audioCalls, 1); assert.ok(prompts[1].includes('"type":"input_file"'));
 });
 test("changed financial permission prevents delivery of a previously generated reply", async () => {
@@ -369,7 +374,7 @@ test("canceling a proposal keeps all business records unchanged", async () => {
   await assistantTransaction(() => { const command = proposeCommand(owner, phone, intent(), "cancel", "Criar"); confirmCommand(owner, phone, command.code, true); assert.equal(command.status, "CANCELED"); assert.match(confirmCommand(owner, phone, command.code), /cancelada/); assert.equal(db.serviceOrderChecklistItems.length, 0); });
 });
 test("sub-cent amounts are rejected before creating a financial command", async () => {
-  await assistantTransaction(() => { assert.throws(() => proposeCommand(finance, phone, intent({ action: "FILE_RECEIPT", financialDirection: "EXPENSE", amount: 0.001, paidAt: "2026-01-01" }), "tiny", "Lançar", receipt), /duas casas/); assert.equal(db.assistantCommands.length, 0); });
+  await assistantTransaction(() => { assert.throws(() => proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "EXPENSE", amount: 0.001, paidAt: "2026-01-01" }), "tiny", "Lançar", receipt), /duas casas/); assert.equal(db.assistantCommands.length, 0); });
 });
 test("simultaneous workers claim one message and execute one AI request", async () => {
   nextIntent = intent({ action: "DIARY" });

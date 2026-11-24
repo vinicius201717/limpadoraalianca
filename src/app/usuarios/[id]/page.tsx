@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getModuleConfig } from "@/lib/module-config";
 import { db, toPublicUser } from "@/lib/store";
 import { whatsappProfileStatus } from "@/lib/whatsapp-profile";
+import { canUseWhatsApp } from "@/lib/whatsapp-schema";
 
 export default async function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const currentUser = await getCurrentUser();
@@ -23,10 +24,12 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   return (
     <Stack spacing={3}>
       <RecordDetailView config={getModuleConfig("usuarios")} record={toPublicUser(user) as unknown as Record<string, unknown>} />
-      <WhatsAppProfileAccessCard
-        viewerUserId={currentUser.id}
-        account={{ userId: user.id, name: user.name, isActive: user.isActive, mustChangePassword: user.mustChangePassword, ...link }}
-      />
+      {canUseWhatsApp(user.role) && (
+        <WhatsAppProfileAccessCard
+          viewerUserId={currentUser.id}
+          account={{ userId: user.id, name: user.name, isActive: user.isActive, mustChangePassword: user.mustChangePassword, ...link }}
+        />
+      )}
     </Stack>
   );
 }

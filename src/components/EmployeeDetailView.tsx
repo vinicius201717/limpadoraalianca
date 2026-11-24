@@ -119,7 +119,7 @@ export function EmployeeDetailView({
   checklistItems = [],
 }: {
   employee: Employee;
-  whatsappAccount: WhatsAppProfileAccount;
+  whatsappAccount?: WhatsAppProfileAccount;
   targetAccessRole?: UserRole | null;
   evaluations: Evaluation[];
   supervisorEvaluations?: SupervisorEvaluation[];
@@ -361,7 +361,7 @@ export function EmployeeDetailView({
         </Button>
       </Stack>
 
-      {user && <WhatsAppProfileAccessCard account={whatsappAccount} viewerUserId={user.id} />}
+      {user && whatsappAccount && <WhatsAppProfileAccessCard account={whatsappAccount} viewerUserId={user.id} />}
 
       {needsTraining && (
         <Alert severity="warning" icon={<SchoolRoundedIcon />}>
