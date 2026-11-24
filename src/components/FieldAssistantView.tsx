@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, Chip, CircularProgress, IconButton, MenuItem, Select, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, CircularProgress, Drawer, IconButton, MenuItem, Select, Stack, TextField, Typography } from "@mui/material";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
 import StopRoundedIcon from "@mui/icons-material/StopRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
@@ -10,12 +10,24 @@ import VideocamRoundedIcon from "@mui/icons-material/VideocamRounded";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import ReplayRoundedIcon from "@mui/icons-material/ReplayRounded";
+import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import type { WorkHistoryEntry, WorkReport } from "@/lib/whatsapp-types";
 
 type Order = { id: string; title: string; status: string; customer?: string };
-type Data = { user: { name: string; role: string }; orders: Order[]; entries: WorkHistoryEntry[]; reports: WorkReport[] };
+type Data = { user: { name: string; role: string }; orders: Order[]; entries: WorkHistoryEntry[];
+  reports: WorkReport[]; warehouseJournal?: WorkHistoryEntry[];
+  locked?: boolean; assignedOrderId?: string | null; assignmentProblem?: string | null };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 const newNonce = () => crypto.randomUUID().replace(/-/g, "");
+async function retryCommit(send: () => Promise<Response>) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await send();
+    if (![409, 503].includes(response.status) || attempt === 2) return response;
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  throw new Error("Tentativas esgotadas.");
+}
 async function asJson<T>(response: Response): Promise<T> {
   const value = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((value as { message?: string }).message || "Não foi possível concluir. Tente novamente.");
@@ -92,7 +104,9 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
   const [pending, setPending] = useState(0);
+  const [warehouseOpen, setWarehouseOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const shouldContinue = useRef(false);
@@ -100,6 +114,8 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const stream = useRef<MediaStream | null>(null);
   const uploadQueue = useRef<Promise<void>>(Promise.resolve());
   const recordingOrder = useRef("");
+  const recordingSession = useRef("");
+  const failedSegments = useRef(0);
   const timeline = useRef<HTMLDivElement | null>(null);
   const photoInput = useRef<HTMLInputElement | null>(null);
   const videoInput = useRef<HTMLInputElement | null>(null);
@@ -116,7 +132,8 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     let live = true;
     void fetch("/api/campo", { cache: "no-store" }).then((res) => asJson<Data>(res)).then((r) => {
       if (!live) return;
-      if (r.orders.length === 1) { setOrderId(r.orders[0].id); orderRef.current = r.orders[0].id; void load(r.orders[0].id); }
+      const autoId = r.locked ? r.assignedOrderId : r.orders.length === 1 ? r.orders[0].id : null;
+      if (autoId) { setOrderId(autoId); orderRef.current = autoId; void load(autoId); }
       else setData(r);
     }).catch((e) => { if (live) setError(e.message); });
     const beforeInstall = (event: Event) => { event.preventDefault(); setInstallPrompt(event as InstallPrompt); };
@@ -144,41 +161,70 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   }, [recording]);
 
   function chooseOrder(next: string) {
-    if (recording || pending || busy) return;
+    if (recording || finalizing || pending || busy || data.locked) return;
     setOrderId(next); orderRef.current = next; setError(""); setNotice("");
     void load(next).catch((e) => setError(e.message));
   }
   async function submitText() {
     if (!orderRef.current) { setError("Selecione a obra primeiro."); return; }
-    const text = draft.trim(); if (!text || busy) return;
+    const text = draft.trim(); if (!text || busy || finalizing) return;
     const submittedOrder = orderRef.current;
     setBusy(true); setError(""); setNotice("");
     try {
-      const r = await asJson<{ entry: WorkHistoryEntry }>(await fetch("/api/campo/registro", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: submittedOrder, nonce: newNonce(), text }),
-      }));
+      const nonce = newNonce();
+      const body = JSON.stringify({ orderId: submittedOrder, nonce, text });
+      const r = await asJson<{ entry: WorkHistoryEntry; operation?: { status: string; message: string } }>(await retryCommit(() => fetch("/api/campo/registro", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body,
+      })));
       if (orderRef.current === submittedOrder) setData((s) => ({ ...s, entries: s.entries.some((x) => x.id === r.entry.id) ? s.entries : [...s.entries, r.entry] }));
       setDraft("");
+      if (r.operation) setNotice(r.operation.status === "executed" ? r.operation.message
+        : r.operation.status === "pending" ? "Ação pendente: " + r.operation.message : "Relato salvo no diário.");
     } catch (e) { setError(e instanceof Error ? e.message : "Falha ao registrar texto."); }
     finally { setBusy(false); }
   }
-  async function submitAudio(file: File, target: string) {
+  async function submitAudio(file: File, target: string, sessionId?: string) {
     const form = new FormData();
     form.set("audio", file); form.set("orderId", target); form.set("nonce", newNonce());
+    if (sessionId) form.set("sessionId", sessionId);
     setPending((v) => v + 1);
     try {
-      const r = await asJson<{ entry: WorkHistoryEntry }>(await fetch("/api/campo/audio", { method: "POST", body: form }));
+      const r = await asJson<{ entry: WorkHistoryEntry; operation?: { status: string; message: string } }>(await retryCommit(() => fetch("/api/campo/audio", { method: "POST", body: form })));
       if (orderRef.current === target) setData((s) => ({ ...s, entries: [...s.entries.filter((x) => x.id !== r.entry.id), r.entry] }));
-    } catch (e) { setError(e instanceof Error ? e.message : "Falha ao transcrever. Regrave o trecho."); }
+      if (r.operation?.status === "pending") setNotice("Ação pendente: " + r.operation.message);
+      else if (r.operation?.status === "executed") setNotice(r.operation.message);
+    } catch (e) { if (sessionId) failedSegments.current++; setError(e instanceof Error ? e.message : "Falha ao transcrever. Regrave o trecho."); }
     finally { setPending((v) => v - 1); }
+  }
+  async function finalizeRecording(target: string, sessionId: string) {
+    if (!sessionId) { setFinalizing(false); return; }
+    if (failedSegments.current) {
+      setNotice("Alguns trechos não foram salvos. Nenhum comando automático será executado. Repita a instrução em outra gravação.");
+      setFinalizing(false); return;
+    }
+    setPending((value) => value + 1);
+    setNotice("Transcrição salva. IA interpretando a instrução completa...");
+    try {
+      const payload = JSON.stringify({ orderId: target, sessionId });
+      const result = await asJson<{ entry?: WorkHistoryEntry; operation?: { status: string; message: string } }>(
+        await retryCommit(() => fetch("/api/campo/finalizar", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: payload })));
+      if (result.entry && orderRef.current === target) setData((state) => ({
+        ...state, entries: state.entries.some((e) => e.id === result.entry!.id) ? state.entries : [...state.entries, result.entry!],
+      }));
+      if (result.operation) setNotice(result.operation.status === "executed"
+        ? result.operation.message : result.operation.status === "pending"
+          ? "Pendente: " + result.operation.message : "Gravação registrada no diário.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "A consolidação falhou. Os trechos transcritos permanecem no diário.");
+    } finally { setPending((value) => value - 1); setFinalizing(false); }
   }
   async function toggleRecording() {
     if (recording) {
       shouldContinue.current = false;
       if (segmentTimer.current) clearTimeout(segmentTimer.current);
       if (recorder.current?.state === "recording") recorder.current.stop();
-      setRecording(false); setNotice("Gravação encerrada. Salvando os últimos trechos...");
+      setRecording(false); setFinalizing(true); setNotice("Gravação encerrada. Salvando os últimos trechos...");
       return;
     }
     if (!orderRef.current) { setError("Selecione uma obra antes de gravar."); return; }
@@ -189,8 +235,9 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     try {
       const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
       const supported = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((type) => MediaRecorder.isTypeSupported(type));
-      stream.current = media; recordingOrder.current = orderRef.current; shouldContinue.current = true;
-      setError(""); setNotice("Gravando. A cada 15 segundos o trecho é transcrito e salvo automaticamente.");
+      stream.current = media; recordingOrder.current = orderRef.current; recordingSession.current = newNonce();
+      failedSegments.current = 0; shouldContinue.current = true;
+      setError(""); setNotice("Gravando e transcrevendo a cada 15 segundos. As ações serão executadas ao parar a gravação.");
       const startSegment = () => {
         if (!shouldContinue.current || !media.active) return;
         // Each segment is a self-contained recording, avoiding unplayable partial WebM blobs.
@@ -201,7 +248,8 @@ export function FieldAssistantView({ userName }: { userName: string }) {
           const mime = rec.mimeType.split(";")[0] || "audio/webm";
           const file = new File([event.data], `trecho-${Date.now()}.${mime.includes("mp4") ? "m4a" : "webm"}`, { type: mime });
           const target = recordingOrder.current;
-          uploadQueue.current = uploadQueue.current.then(() => submitAudio(file, target));
+          const sessionId = recordingSession.current;
+          uploadQueue.current = uploadQueue.current.then(() => submitAudio(file, target, sessionId));
         };
         rec.onerror = () => {
           shouldContinue.current = false; setRecording(false);
@@ -210,7 +258,11 @@ export function FieldAssistantView({ userName }: { userName: string }) {
         rec.onstop = () => {
           if (segmentTimer.current) clearTimeout(segmentTimer.current);
           if (shouldContinue.current) startSegment();
-          else { media.getTracks().forEach((track) => track.stop()); recorder.current = null; }
+          else {
+            media.getTracks().forEach((track) => track.stop()); recorder.current = null;
+            const target = recordingOrder.current; const sessionId = recordingSession.current;
+            void uploadQueue.current.then(() => finalizeRecording(target, sessionId));
+          }
         };
         rec.start();
         segmentTimer.current = setTimeout(() => {
@@ -224,7 +276,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   async function uploadFile(file: File, type: "image" | "video") {
     const target = orderRef.current;
     if (!target) { setError("Selecione uma obra antes de enviar mídias."); return; }
-    if (busy || recording) return;
+    if (busy || recording || finalizing) return;
     const mime = file.type.split(";")[0].toLowerCase();
     setBusy(true); setError(""); setNotice("Enviando e analisando arquivo...");
     try {
@@ -266,20 +318,32 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       <Box sx={{ px: { xs: 1.5, sm: 3 }, py: 1.3, display: "flex", alignItems: "center", gap: 1.5, bgcolor: "#0c2138", borderBottom: "1px solid #264458", flexShrink: 0 }}>
         <Box sx={{ width: 37, height: 37, borderRadius: 2, display: "grid", placeItems: "center", bgcolor: "#163a48" }}><MicRoundedIcon sx={{ color: "#75e5ad" }} /></Box>
         <Box sx={{ flex: 1, minWidth: 0 }}><Typography fontWeight={850} sx={{ fontSize: { xs: 15, sm: 19 }, lineHeight: 1.3 }}>Aliança • Assistente de campo</Typography><Typography variant="caption" sx={{ color: "#a7bccc" }} noWrap>{userName} · diário e evidências da obra</Typography></Box>
+        {["OWNER", "GERENTE", "ALMOXARIFADO"].includes(data.user.role) &&
+          <IconButton onClick={() => setWarehouseOpen(true)} aria-label="Consultar diário do almoxarifado" sx={{ color: "#a7e5d0" }}>
+            <Inventory2RoundedIcon />
+          </IconButton>}
         {installPrompt && <Button size="small" variant="outlined" sx={{ borderColor: "#5d9d89", color: "#a6eed1" }} onClick={() => void installPrompt.prompt()}>Instalar app</Button>}
         <IconButton onClick={() => void load(orderRef.current).catch((e) => setError(e.message))} aria-label="Atualizar registros" sx={{ color: "#b5cbd8" }}><ReplayRoundedIcon /></IconButton>
       </Box>
       <Box sx={{ px: { xs: 1.5, sm: 3 }, py: 1.25, bgcolor: "#102942", borderBottom: "1px solid #264458", display: "flex", flexDirection: "column", gap: 0.7, flexShrink: 0 }}>
         <Typography variant="caption" sx={{ color: "#b3cfdb", fontWeight: 700 }}>OBRA EM QUE ESTE RELATO SERÁ SALVO</Typography>
-        <Select fullWidth size="small" displayEmpty value={orderId} disabled={recording || busy || pending > 0}
-          onChange={(event) => chooseOrder(event.target.value)} sx={{ bgcolor: "#173650", color: "#fff", "& .MuiSvgIcon-root": { color: "#c3dee4" }, "& .MuiOutlinedInput-notchedOutline": { borderColor: "#4b7186" } }}>
-          <MenuItem value="">Selecione a obra antes de registrar</MenuItem>
-          {data.orders.map((o) => <MenuItem key={o.id} value={o.id}>{o.title}{o.customer ? ` · ${o.customer}` : ""}</MenuItem>)}
-        </Select>
-        {selected && <Typography variant="caption" sx={{ color: "#97b5c5" }}>OS selecionada: {selected.title} · {selected.status}</Typography>}
+        {data.locked ? (
+          <Box sx={{ bgcolor: "#173650", border: "1px solid #4b7186", borderRadius: 2, px: 1.6, py: 1.2 }}>
+            <Typography fontWeight={800} sx={{ color: "#ecfaf3" }}>{selected ? selected.title : "Sem obra vinculada"}</Typography>
+            <Typography variant="caption" sx={{ color: "#acd2cb" }}>Vínculo automático pelo seu perfil. Não é possível trocar a obra por aqui.</Typography>
+          </Box>
+        ) : (
+          <Select fullWidth size="small" displayEmpty value={orderId} disabled={recording || finalizing || busy || pending > 0}
+            onChange={(event) => chooseOrder(event.target.value)} sx={{ bgcolor: "#173650", color: "#fff", "& .MuiSvgIcon-root": { color: "#c3dee4" }, "& .MuiOutlinedInput-notchedOutline": { borderColor: "#4b7186" } }}>
+            <MenuItem value="">Selecione a obra antes de registrar</MenuItem>
+            {data.orders.map((o) => <MenuItem key={o.id} value={o.id}>{o.title}{o.customer ? ` · ${o.customer}` : ""}</MenuItem>)}
+          </Select>
+        )}
+        {selected && <Typography variant="caption" sx={{ color: "#97b5c5" }}>{selected.id === "warehouse" ? "Registros do almoxarifado" : "OS vinculada: " + selected.title + " · " + selected.status}</Typography>}
+        {data.assignmentProblem && <Alert severity="warning">{data.assignmentProblem}</Alert>}
       </Box>
       <Box ref={timeline} role="log" aria-live="polite" aria-label="Transcrições e registros da obra" sx={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", px: { xs: 1.5, md: 4 }, py: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
-        {!orderId && <Box sx={{ mt: "auto", mb: "auto", textAlign: "center", opacity: 0.75 }}><MicRoundedIcon sx={{ fontSize: 62, color: "#75e5ad" }} /><Typography variant="h6">Escolha uma obra</Typography><Typography variant="body2">Grave, digite ou envie fotos e vídeos. Tudo ficará no diário da obra selecionada.</Typography></Box>}
+        {!orderId && <Box sx={{ mt: "auto", mb: "auto", textAlign: "center", opacity: 0.75 }}><MicRoundedIcon sx={{ fontSize: 62, color: "#75e5ad" }} /><Typography variant="h6">{data.locked ? "Aguardando atribuição de obra" : "Escolha uma obra"}</Typography><Typography variant="body2">Grave, digite ou envie fotos e vídeos. O registro seguirá a obra vinculada ao seu perfil.</Typography></Box>}
         {!!orderId && data.entries.length === 0 && <Typography sx={{ m: "auto", color: "#b0c9d8", textAlign: "center" }}>Nenhum relato nesta obra. Inicie a gravação para documentar o serviço.</Typography>}
         {data.entries.map((entry) => (
           <Box key={entry.id} sx={{ ml: "auto", width: "fit-content", maxWidth: "min(92%, 760px)", px: 2, py: 1.5, bgcolor: "#18463e", borderRadius: "16px 16px 4px 16px", boxShadow: "0 4px 14px #0002", overflowWrap: "anywhere" }}>
@@ -294,16 +358,16 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       <Box sx={{ flexShrink: 0, bgcolor: "#0c2138", borderTop: "1px solid #305066", px: { xs: 1.5, sm: 3 }, pt: 1.3, pb: "max(12px, env(safe-area-inset-bottom))" }}>
         {recording && <Stack direction="row" spacing={1} alignItems="center" justifyContent="center" sx={{ mb: 1 }}><Box sx={{ height: 10, width: 10, bgcolor: "#ff4d58", borderRadius: "50%", animation: "campo-pulse 1.1s infinite" }}/><Typography fontWeight={700} sx={{ color: "#ffb1b8" }}>Gravando e transcrevendo a cada 15 segundos</Typography></Stack>}
         <Stack direction="row" alignItems="flex-end" gap={0.7}>
-          <Box sx={{ flex: 1, minWidth: 0 }}><TextField fullWidth multiline maxRows={3} size="small" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={!orderId || recording || busy} placeholder="Escreva seu relato da obra..." sx={{ "& .MuiOutlinedInput-root": { bgcolor: "#193a52", color: "white", borderRadius: 3 }, "& textarea::placeholder": { color: "#b9cbd7", opacity: 1 } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitText(); } }} /></Box>
-          <IconButton aria-label="Enviar mensagem" disabled={!draft.trim() || !orderId || recording || busy} onClick={() => void submitText()} sx={{ bgcolor: "#148865", color: "white", "&:hover": { bgcolor: "#187a60" }, "&.Mui-disabled": { bgcolor: "#223c48", color: "#69828a" } }}><SendRoundedIcon /></IconButton>
+          <Box sx={{ flex: 1, minWidth: 0 }}><TextField fullWidth multiline maxRows={3} size="small" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={!orderId || recording || finalizing || busy} placeholder="Escreva seu relato da obra..." sx={{ "& .MuiOutlinedInput-root": { bgcolor: "#193a52", color: "white", borderRadius: 3 }, "& textarea::placeholder": { color: "#b9cbd7", opacity: 1 } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitText(); } }} /></Box>
+          <IconButton aria-label="Enviar mensagem" disabled={!draft.trim() || !orderId || recording || finalizing || busy} onClick={() => void submitText()} sx={{ bgcolor: "#148865", color: "white", "&:hover": { bgcolor: "#187a60" }, "&.Mui-disabled": { bgcolor: "#223c48", color: "#69828a" } }}><SendRoundedIcon /></IconButton>
         </Stack>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ pt: 1.1 }} gap={1}>
           <Stack direction="row" spacing={0.4}>
-            <IconButton aria-label="Enviar foto" disabled={!orderId || recording || busy || pending > 0} onClick={() => photoInput.current?.click()} sx={{ color: "#b7d4d9" }}><CameraAltRoundedIcon /></IconButton>
-            <IconButton aria-label="Enviar vídeo" disabled={!orderId || recording || busy || pending > 0} onClick={() => videoInput.current?.click()} sx={{ color: "#b7d4d9" }}><VideocamRoundedIcon /></IconButton>
-            <IconButton aria-label="Gerar relatório IA" disabled={!orderId || recording || busy || pending > 0} onClick={() => void generateReport()} sx={{ color: "#b7d4d9" }}><AutoAwesomeRoundedIcon /></IconButton>
+            <IconButton aria-label="Enviar foto" disabled={!orderId || recording || finalizing || busy || pending > 0} onClick={() => photoInput.current?.click()} sx={{ color: "#b7d4d9" }}><CameraAltRoundedIcon /></IconButton>
+            <IconButton aria-label="Enviar vídeo" disabled={!orderId || recording || finalizing || busy || pending > 0} onClick={() => videoInput.current?.click()} sx={{ color: "#b7d4d9" }}><VideocamRoundedIcon /></IconButton>
+            <IconButton aria-label="Gerar relatório IA" disabled={!orderId || orderId === "warehouse" || recording || finalizing || busy || pending > 0} onClick={() => void generateReport()} sx={{ color: "#b7d4d9" }}><AutoAwesomeRoundedIcon /></IconButton>
           </Stack>
-          <Button variant="contained" color={recording ? "error" : "success"} disabled={busy || (!orderId && !recording)} onClick={() => void toggleRecording()} startIcon={recording ? <StopRoundedIcon /> : <MicRoundedIcon />} sx={{ borderRadius: 9, px: { xs: 2, sm: 3 }, py: 1.2, fontWeight: 850, minWidth: 142 }}>
+          <Button variant="contained" color={recording ? "error" : "success"} disabled={busy || finalizing || (!orderId && !recording)} onClick={() => void toggleRecording()} startIcon={recording ? <StopRoundedIcon /> : <MicRoundedIcon />} sx={{ borderRadius: 9, px: { xs: 2, sm: 3 }, py: 1.2, fontWeight: 850, minWidth: 142 }}>
             {recording ? "PARAR" : "GRAVAR"}
           </Button>
           {pending > 0 || busy ? <CircularProgress size={20} sx={{ color: "#91d9be" }}/> : <Box sx={{ width: 20 }}/>}
@@ -312,6 +376,23 @@ export function FieldAssistantView({ userName }: { userName: string }) {
         <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadFile(f, "image"); }}/>
         <input ref={videoInput} type="file" accept="video/mp4,video/webm,video/quicktime" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadFile(f, "video"); }}/>
       </Box>
+      <Drawer anchor="right" open={warehouseOpen} onClose={() => setWarehouseOpen(false)}
+        PaperProps={{ sx: { width: "min(100vw, 450px)", bgcolor: "#0d253c", color: "#f3fff8", p: 2, overflow: "auto" } }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+          <Typography variant="h6" fontWeight={850}>Movimentos do almoxarifado</Typography>
+          <IconButton aria-label="Fechar histórico do estoque" onClick={() => setWarehouseOpen(false)} sx={{ color: "#e9f6ed" }}><CloseRoundedIcon /></IconButton>
+        </Stack>
+        <Typography sx={{ color: "#aac4d2", fontSize: 13, mb: 2 }}>Retiradas, entradas e devoluções registradas por voz, sem alterar a obra ativa do seu perfil.</Typography>
+        <Stack gap={1.2}>
+          {!data.warehouseJournal?.length && <Typography sx={{ color: "#aac4d2" }}>Nenhum movimento registrado pelo assistente.</Typography>}
+          {data.warehouseJournal?.slice(-50).reverse().map((entry) => (
+            <Box key={entry.id} sx={{ bgcolor: "#173b49", borderRadius: 2, p: 1.5 }}>
+              <Typography fontWeight={700} sx={{ fontSize: 13, mb: 0.6 }}>{entry.authorName} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</Typography>
+              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{entry.content}</Typography>
+            </Box>
+          ))}
+        </Stack>
+      </Drawer>
       <style>{`@keyframes campo-pulse{0%,100%{opacity:1}50%{opacity:.28}}`}</style>
     </Box>
   );

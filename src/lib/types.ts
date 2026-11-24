@@ -235,6 +235,8 @@ export type ServiceOrderChecklistItem = {
   blockedReason?: string;
   notes?: string;
   createdByUserId: string;
+  origin?: "FIELD_ASSISTANT";
+  sourceMessageId?: string;
   plannedStartAt?: string;
   dueAt?: string;
   allowCollaboratorAction?: boolean;
@@ -331,6 +333,8 @@ export type ServiceOrderMaterial = {
   notes: string;
   preparedByUserId?: string;
   deliveredByUserId?: string;
+  receivedByEmployeeIds?: string[];
+  sourceMessageId?: string;
   createdAt: string;
   updatedAt: string;
 };

@@ -16,8 +16,8 @@ process.env.WHATSAPP_PHONE_NUMBER_ID = "12345";
 process.env.WHATSAPP_ACCESS_TOKEN = "test-only-access-token";
 process.env.WHATSAPP_GRAPH_VERSION = "v99.0";
 process.env.OPENAI_API_KEY = "test-only-openai-key";
-const { db, createChecklistItem } = await import("../src/lib/store");
-const { APP_STATE_ID } = await import("../src/lib/request-store");
+const { db, createChecklistItem, ensureDatabaseReady } = await import("../src/lib/store");
+const { APP_STATE_ID, runWithStore } = await import("../src/lib/request-store");
 const { actorForPhone, assistantContext, assistantTransaction, confirmCommand, consumeLink, createLink, digest, enqueueWhatsAppMessages, proposeCommand, saveDiary, validateIntent, visibleHistory } = await import("../src/lib/whatsapp-operations");
 const { parseWhatsAppMessages, verifyWhatsAppSignature, whatsappConfiguration } = await import("../src/lib/whatsapp-provider");
 const { drainWhatsAppQueue } = await import("../src/lib/whatsapp-worker");
@@ -27,6 +27,10 @@ const { canUseWhatsApp } = await import("../src/lib/whatsapp-schema");
 const { createWorkReport } = await import("../src/lib/work-reports");
 const { appendFieldEntry, fieldHistory, fieldOrders } = await import("../src/lib/field-assistant");
 const { verifyUploadTicket } = await import("../src/lib/field-storage");
+const { fieldAssignment, authorizeFieldContext } = await import("../src/lib/field-assistant");
+const { processFieldStatement, fieldSpeechContext } = await import("../src/lib/field-automation");
+const { diaryAction } = await import("../src/lib/field-action-schema");
+import type { FieldAction } from "../src/lib/field-action-schema";
 const owner: SystemUser = { id: "owner", name: "Dona", email: "owner@example.test", role: "OWNER", isActive: true, sessionVersion: 0, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const supervisor: SystemUser = { ...owner, id: "supervisor", name: "Supervisora", role: "SUPERVISOR_OBRA", email: "sup@example.test" };
 const finance: SystemUser = { ...owner, id: "finance", name: "Financeiro", role: "FINANCEIRO", email: "fin@example.test" };
@@ -362,4 +366,278 @@ test("simultaneous workers claim one message and execute one AI request", async 
   await assistantTransaction(() => { consumeLink(phone, createLink(supervisor).token); enqueueWhatsAppMessages([incoming("concurrent", "Relato da obra")]); });
   await Promise.all([drainWhatsAppQueue(), drainWhatsAppQueue()]);
   assert.equal(aiCalls, 1); await assistantTransaction(() => assert.equal(db.workHistory.length, 1));
+});
+
+
+function fieldCommand(overrides: Partial<FieldAction>): FieldAction {
+  return { ...diaryAction(), confidence: "HIGH", ...overrides };
+}
+async function runFieldCommand(user: SystemUser, orderId: string, nonce: string, action: FieldAction, text = "Relato em português da obra.") {
+  let result!: Awaited<ReturnType<typeof processFieldStatement>>;
+  await runWithStore(async () => {
+    await ensureDatabaseReady();
+    result = await processFieldStatement({ user, orderId, nonce, text, modelOverride: action });
+    return Response.json({ ok: true });
+  });
+  return result;
+}
+function sampleWarehouse(): SystemUser {
+  return { ...owner, id: "warehouse-user", name: "Almoxarife", email: "alm@example.test", role: "ALMOXARIFADO" };
+}
+function setupWarehouse(assigned = true) {
+  const worker = sampleWarehouse();
+  db.users.push(worker);
+  db.employees.push(employee("warehouse-emp", worker.id));
+  if (assigned) db.serviceOrderEmployees.push({
+    id: "wh-assignment", serviceOrderId: "a", employeeId: "warehouse-emp",
+    roleInService: "ALMOXARIFADO", assignedByUserId: owner.id, assignedAt: "", createdAt: "", updatedAt: "",
+  });
+  db.materials.push({ id: "mat-clean", name: "Detergente industrial", unit: "litros", currentStock: 10,
+    minStock: 2, unitCost: 0, status: "AVAILABLE" });
+  db.equipment.push({ id: "equipment-1", name: "Lavadora", code: "L-001", notes: "", status: "AVAILABLE" });
+  return worker;
+}
+test("supervisor is locked to active supervisor assignment; cannot switch or spoof other works", async () => {
+  await assistantTransaction(() => {
+    const assignment = fieldAssignment(supervisor);
+    assert.equal(assignment.locked, true);
+    assert.equal(assignment.orderId, "a");
+    assert.equal(assignment.orders.length, 1);
+    assert.throws(() => authorizeFieldContext(supervisor, "b"));
+    db.serviceOrders.find((order) => order.id === "b")!.supervisorUserId = supervisor.id;
+    const conflict = fieldAssignment(supervisor);
+    assert.equal(conflict.orderId, null);
+    assert.match(conflict.problem!, /mais de uma obra/);
+    assert.throws(() => authorizeFieldContext(supervisor, "a"));
+  });
+});
+test("a voice-created checklist item has the correct author, two responsible employees and linked diary event", async () => {
+  const created = await runFieldCommand(supervisor, "a", "field-auto-task-0001",
+    fieldCommand({ action: "CREATE_CHECKLIST", title: "Limpar área externa", details: "Lavar sem danificar o piso.",
+      employeeIds: ["worker", "sup-employee"] }), "Crie a tarefa de limpar a área externa para Carlos e supervisora.");
+  assert.equal(created.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.serviceOrderChecklistItems.length, 1);
+    const item = db.serviceOrderChecklistItems[0];
+    assert.equal(item.serviceOrderId, "a");
+    assert.equal(item.createdByUserId, supervisor.id);
+    assert.equal(item.origin, "FIELD_ASSISTANT");
+    assert.deepEqual(item.assignedEmployeeIds, ["worker", "sup-employee"]);
+    assert.equal(item.sourceMessageId, "campo:supervisor:field-auto-task-0001");
+    assert.equal(db.serviceOrderChecklistEvents[0].type, "CREATED");
+    assert.match(db.workHistory[0].content, /Ação executada/);
+    assert.equal(db.workHistory[0].transcript, "Crie a tarefa de limpar a área externa para Carlos e supervisora.");
+  });
+  await runFieldCommand(supervisor, "a", "field-auto-task-0001",
+    fieldCommand({ action: "CREATE_CHECKLIST", title: "Duplicado" }));
+  await assistantTransaction(() => { assert.equal(db.serviceOrderChecklistItems.length, 1); assert.equal(db.workHistory.length, 1); });
+});
+test("add responsibilities on an existing checklist item without replacing the original team", async () => {
+  await runFieldCommand(supervisor, "a", "field-add-task-0001",
+    fieldCommand({ action: "CREATE_CHECKLIST", title: "Polir recepção", employeeIds: ["worker"] }));
+  let itemId = "";
+  await assistantTransaction(() => { itemId = db.serviceOrderChecklistItems[0].id; });
+  const result = await runFieldCommand(supervisor, "a", "field-assign-task-0002",
+    fieldCommand({ action: "ASSIGN_CHECKLIST", checklistItemId: itemId, employeeIds: ["sup-employee"] }));
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.deepEqual(db.serviceOrderChecklistItems[0].assignedEmployeeIds, ["worker", "sup-employee"]);
+    assert.equal(db.serviceOrderChecklistEvents.some((e) => e.type === "ASSIGNED"), true);
+  });
+});
+test("warehouse stock dispatch is atomic and idempotent, keeps original work diary and a separate stock journal", async () => {
+  const warehouse = sampleWarehouse();
+  await assistantTransaction(() => {
+    setupWarehouse();
+    assert.equal(fieldAssignment(warehouse).orderId, "a");
+    assert.equal(fieldSpeechContext(warehouse, "a").inventoryOrders.length, 2);
+  });
+  const delivery = fieldCommand({ action: "STOCK_DISPATCH", materialId: "mat-clean", quantity: 2,
+    targetOrderId: "a", unit: "litros", employeeIds: ["worker"] });
+  const first = await runFieldCommand(warehouse, "a", "warehouse-delivery-0001", delivery, "Equipe da obra A pegou 2 litros do detergente industrial.");
+  assert.equal(first.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.materials[0].currentStock, 8);
+    assert.equal(db.serviceOrderMaterials[0].deliveredQuantity, 2);
+    assert.equal(db.serviceOrderMaterials[0].status, "DELIVERED_TO_TEAM");
+    assert.deepEqual(db.serviceOrderMaterials[0].receivedByEmployeeIds, ["worker"]);
+    assert.equal(db.warehouseJournal.length, 1);
+    assert.equal(db.workHistory.length, 1);
+  });
+  await runFieldCommand(warehouse, "a", "warehouse-delivery-0001", delivery);
+  await assistantTransaction(() => { assert.equal(db.materials[0].currentStock, 8); assert.equal(db.warehouseJournal.length, 1); });
+  const returned = await runFieldCommand(warehouse, "a", "warehouse-return-00002",
+    fieldCommand({ action: "STOCK_RETURN", materialId: "mat-clean", quantity: 1, unit: "litros", targetOrderId: "a" }));
+  assert.equal(returned.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.materials[0].currentStock, 9);
+    assert.equal(db.serviceOrderMaterials[0].returnedQuantity, 1);
+    assert.equal(db.warehouseJournal.length, 2);
+  });
+  const invalid = await runFieldCommand(warehouse, "a", "warehouse-return-00003",
+    fieldCommand({ action: "STOCK_RETURN", materialId: "mat-clean", quantity: 7, targetOrderId: "a" }));
+  assert.equal(invalid.operation.status, "pending");
+  await assistantTransaction(() => { assert.equal(db.materials[0].currentStock, 9); assert.equal(db.serviceOrderMaterials[0].returnedQuantity, 1); });
+});
+test("a warehouse employee with no assigned work can receive a new product in warehouse-only mode", async () => {
+  const warehouse = sampleWarehouse();
+  await assistantTransaction(() => { setupWarehouse(false); assert.equal(fieldAssignment(warehouse).orderId, "warehouse"); });
+  const result = await runFieldCommand(warehouse, "warehouse", "new-stock-arrival-01",
+    fieldCommand({ action: "STOCK_NEW", materialName: "Resina incolor", unit: "litros", quantity: 18 }),
+    "Chegaram 18 litros de resina incolor, produto novo.");
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.materials.find((item) => item.name === "Resina incolor")?.currentStock, 18);
+    assert.equal(db.warehouseJournal.length, 1);
+  });
+  const duplicate = await runFieldCommand(warehouse, "warehouse", "new-stock-arrival-02",
+    fieldCommand({ action: "STOCK_NEW", materialName: "Resina incolor", unit: "litros", quantity: 10 }));
+  assert.equal(duplicate.operation.status, "pending");
+  await assistantTransaction(() => { assert.equal(db.materials.filter((item) => item.name === "Resina incolor").length, 1); });
+});
+test("a supervisor cannot change stock; low-confidence voice commands are diary only", async () => {
+  await assistantTransaction(() => { db.materials.push({ id: "mat-clean", name: "Detergente", unit: "litros", currentStock: 10, minStock: 2, unitCost: 0 }); });
+  const forbidden = await runFieldCommand(supervisor, "a", "forbidden-stock-0001",
+    fieldCommand({ action: "STOCK_DISPATCH", materialId: "mat-clean", quantity: 3, targetOrderId: "a" }));
+  assert.equal(forbidden.operation.status, "pending");
+  const uncertain = await runFieldCommand(supervisor, "a", "uncertain-item-0001",
+    fieldCommand({ action: "CREATE_CHECKLIST", title: "Trabalho duvidoso", confidence: "LOW", question: "Qual trabalho você quer criar?" }));
+  assert.equal(uncertain.operation.status, "pending");
+  await assistantTransaction(() => { assert.equal(db.serviceOrderChecklistItems.length, 0); assert.equal(db.materials[0].currentStock, 10); assert.equal(db.workHistory.length, 2); });
+});
+test("a warehouse employee can update a different team's stock only when the target order is explicitly authorized", async () => {
+  const warehouse = sampleWarehouse();
+  await assistantTransaction(() => { setupWarehouse(); });
+  const result = await runFieldCommand(warehouse, "a", "warehouse-cross-00001",
+    fieldCommand({ action: "STOCK_DISPATCH", materialId: "mat-clean", quantity: 2, targetOrderId: "b" }),
+    "A equipe da obra B retirou 2 litros de detergente.");
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.warehouseJournal.length, 1);
+    assert.equal(db.workHistory.length, 2);
+    assert.ok(db.workHistory.some((entry) => entry.serviceOrderId === "b"));
+    assert.equal(db.serviceOrderMaterials[0].serviceOrderId, "b");
+    assert.equal(db.materials[0].currentStock, 8);
+  });
+});
+test("equipment dispatch and return preserve the machine's custody trail", async () => {
+  const warehouse = sampleWarehouse();
+  await assistantTransaction(() => { setupWarehouse(); });
+  const delivered = await runFieldCommand(warehouse, "a", "machine-dispatch-00001",
+    fieldCommand({ action: "EQUIPMENT_DISPATCH", equipmentId: "equipment-1", targetOrderId: "a" }));
+  assert.equal(delivered.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.equipment[0].status, "RESERVED");
+    assert.equal(db.serviceOrderEquipment[0].status, "DELIVERED");
+  });
+  const returned = await runFieldCommand(warehouse, "a", "machine-return-00001",
+    fieldCommand({ action: "EQUIPMENT_RETURN", equipmentId: "equipment-1", targetOrderId: "a" }));
+  assert.equal(returned.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.equipment[0].status, "AVAILABLE");
+    assert.equal(db.serviceOrderEquipment[0].status, "RETURNED");
+    assert.equal(db.warehouseJournal.length, 2);
+  });
+});
+
+
+test("closed work remains readable for reports, but no further field writing is permitted", async () => {
+  await assistantTransaction(() => {
+    db.serviceOrders.find((order) => order.id === "a")!.status = "DONE";
+    assert.equal(fieldAssignment(supervisor).orderId, null);
+    assert.doesNotThrow(() => fieldHistory(supervisor, "a"));
+    assert.throws(() => authorizeFieldContext(supervisor, "a"));
+  });
+});
+test("supervisor requests material through the existing requisition workflow without removing stock", async () => {
+  await assistantTransaction(() => {
+    db.materials.push({ id: "mat-clean", name: "Detergente", unit: "litros", currentStock: 10, minStock: 1, unitCost: 0 });
+  });
+  const result = await runFieldCommand(supervisor, "a", "field-material-req-0001",
+    fieldCommand({ action: "REQUEST_MATERIAL", materialId: "mat-clean", quantity: 3, details: "Precisamos antes das 14 horas." }),
+    "Solicite 3 litros de detergente para esta obra.");
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.materials[0].currentStock, 10);
+    assert.equal(db.materialRequests.length, 1);
+    assert.equal(db.materialRequests[0].serviceOrderId, "a");
+    assert.equal(db.materialRequests[0].requestedByUserId, supervisor.id);
+    assert.equal(db.materialRequestItems[0].materialId, "mat-clean");
+    assert.equal(db.materialRequestItems[0].quantity, 3);
+    assert.equal(db.workHistory.length, 1);
+  });
+});
+test("shared warehouse movement journal excludes unrelated transcript and private audio", async () => {
+  const warehouse = sampleWarehouse();
+  await assistantTransaction(() => { setupWarehouse(); });
+  const text = "A equipe B levou dois litros. Comentário particular que não faz parte do estoque.";
+  const result = await runFieldCommand(warehouse, "a", "warehouse-privacy-0001",
+    fieldCommand({ action: "STOCK_DISPATCH", targetOrderId: "b", materialId: "mat-clean", quantity: 2 }), text);
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.match(db.workHistory.find((e) => e.serviceOrderId === "a")!.transcript, /Comentário particular/);
+    const ledger = db.warehouseJournal[0];
+    assert.ok(!ledger.transcript);
+    assert.ok(!ledger.attachment);
+    assert.ok(!ledger.content.includes("Comentário particular"));
+    const target = db.workHistory.find((e) => e.serviceOrderId === "b")!;
+    assert.ok(!target.transcript);
+    assert.ok(!target.content.includes("Comentário particular"));
+  });
+});
+
+
+test("a recording session stores each live transcript and applies only the complete instruction once", async () => {
+  const session = "voice-session-00001";
+  await assistantTransaction(() => {
+    appendFieldEntry({
+      user: supervisor, orderId: "a", nonce: "chunk-part-000001",
+      title: "Trecho de gravação transcrito", content: "Crie um item para limpar o depósito",
+      transcript: "Crie um item para limpar o depósito", recordingSessionId: session,
+    });
+    appendFieldEntry({
+      user: supervisor, orderId: "a", nonce: "chunk-part-000002",
+      title: "Trecho de gravação transcrito", content: "e atribua o Carlos a esse item.",
+      transcript: "e atribua o Carlos a esse item.", recordingSessionId: session,
+    });
+    assert.equal(db.serviceOrderChecklistItems.length, 0);
+  });
+  const joined = "Crie um item para limpar o depósito e atribua o Carlos a esse item.";
+  let result!: Awaited<ReturnType<typeof processFieldStatement>>;
+  await runWithStore(async () => {
+    await ensureDatabaseReady();
+    result = await processFieldStatement({
+      user: supervisor, orderId: "a", nonce: "sess_" + session, text: joined, summaryOnly: true,
+      modelOverride: fieldCommand({ action: "CREATE_CHECKLIST", title: "Limpar depósito", employeeIds: ["worker"] }),
+    });
+    return Response.json({ ok: true });
+  });
+  assert.equal(result.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.serviceOrderChecklistItems.length, 1);
+    assert.deepEqual(db.serviceOrderChecklistItems[0].assignedEmployeeIds, ["worker"]);
+    assert.equal(db.workHistory.length, 3);
+    assert.equal(db.workHistory.filter((e) => e.recordingSessionId === session).length, 2);
+    assert.equal(db.workHistory.find((e) => e.messageId === "campo:supervisor:sess_" + session)?.transcript, "");
+  });
+  await runWithStore(async () => {
+    await ensureDatabaseReady();
+    await processFieldStatement({
+      user: supervisor, orderId: "a", nonce: "sess_" + session, text: joined, summaryOnly: true,
+      modelOverride: fieldCommand({ action: "CREATE_CHECKLIST", title: "Outra tarefa" }),
+    });
+    return Response.json({ ok: true });
+  });
+  await assistantTransaction(() => assert.equal(db.serviceOrderChecklistItems.length, 1));
+});
+test("finalizing a nonexistent recording cannot fabricate or mutate the work diary", async () => {
+  const { POST } = await import("../src/app/api/campo/finalizar/route");
+  const raw = new NextRequest("http://localhost:3000/api/campo/finalizar", {
+    method: "POST",
+    headers: { cookie: "floor_session=" + signSessionToken(supervisor), "content-type": "application/json" },
+    body: JSON.stringify({ orderId: "a", sessionId: "not-existing-recording" }),
+  });
+  const result = await POST(raw, undefined);
+  assert.equal(result.status, 409);
+  assert.equal(state().workHistory, undefined);
 });
