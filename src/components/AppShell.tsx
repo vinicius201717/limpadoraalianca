@@ -80,7 +80,7 @@ const menuItems = [
   { label: "Financeiro", href: "/financeiro", icon: <PaidRoundedIcon /> },
   { label: "Galeria", href: "/galeria", icon: <PhotoLibraryRoundedIcon /> },
   { label: "Garantias", href: "/garantias", icon: <AccountBalanceWalletRoundedIcon /> },
-  { label: "Relatorios", href: "/relatorios", icon: <AssessmentRoundedIcon /> },
+  { label: "Relatórios Gerais", href: "/relatorios", icon: <AssessmentRoundedIcon /> },
   { label: "Configuracoes", href: "/configuracoes", icon: <SettingsRoundedIcon /> },
 ];
 
