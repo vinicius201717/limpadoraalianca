@@ -3,7 +3,7 @@ import { z } from "zod";
 /** The model proposes one bounded action. Only server validation may execute it. */
 export const fieldActionSchema = z.object({
   action: z.enum([
-    "DIARY", "CLARIFY", "LIST_CHECKLIST", "LIST_PENDING_CHECKLIST", "CREATE_CHECKLIST", "ASSIGN_CHECKLIST", "START_CHECKLIST", "COMPLETE_CHECKLIST", "BLOCK_CHECKLIST",
+    "DIARY", "CLARIFY", "LIST_CHECKLIST", "LIST_PENDING_CHECKLIST", "CREATE_CHECKLIST", "ASSIGN_CHECKLIST", "START_CHECKLIST", "COMPLETE_CHECKLIST", "BLOCK_CHECKLIST", "VALIDATE_CHECKLIST", "FINISH_ORDER", "CREATE_CHARGE",
     "REQUEST_MATERIAL", "STOCK_NEW", "STOCK_RECEIVE", "STOCK_DISPATCH", "STOCK_RETURN", "STOCK_CONSUME", "STOCK_DAMAGE", "STOCK_LOSS",
     "EQUIPMENT_DISPATCH", "EQUIPMENT_RETURN", "EQUIPMENT_DAMAGE",
     "REPORT_ABSENCE", "REPORT_EARLY_LEAVE", "DESCRIBE_RECEIPT", "LIST_FINANCIAL_RECEIPTS", "SETTLE_RECEIPT",
@@ -24,11 +24,13 @@ export const fieldActionSchema = z.object({
   occurredOn: z.string().max(10).nullable().optional().default(null),
   occurredAt: z.string().max(5).nullable().optional().default(null),
   receiptId: z.string().max(160).nullable().optional().default(null),
+  financialAmount: z.number().finite().positive().max(1e9).nullable().optional().default(null),
+  dueAt: z.string().max(10).nullable().optional().default(null),
   uiTheme: z.enum(["dark", "light"]).nullable().optional().default(null),
 });
 export type FieldAction = z.infer<typeof fieldActionSchema>;
 export const diaryAction = (): FieldAction => ({
   action: "DIARY", confidence: "HIGH", question: "", title: "", details: "",
   employeeIds: [], checklistItemId: null, targetOrderId: null, materialId: null,
-  equipmentId: null, materialName: "", unit: "", quantity: null, occurredOn: null, occurredAt: null, receiptId: null, uiTheme: null,
+  equipmentId: null, materialName: "", unit: "", quantity: null, occurredOn: null, occurredAt: null, receiptId: null, financialAmount: null, dueAt: null, uiTheme: null,
 });

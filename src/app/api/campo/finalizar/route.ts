@@ -6,6 +6,8 @@ import { processFieldStatement } from "@/lib/field-automation";
 import { diaryAction } from "@/lib/field-action-schema";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { db } from "@/lib/store";
+import { authorizeServiceOrderAccess } from "@/lib/service-order-access";
+import { canViewServiceOrderFinancials } from "@/lib/permissions";
 
 export const maxDuration = 110;
 const schema = z.object({
@@ -17,12 +19,19 @@ const schema = z.object({
 export const POST = withDatabase(async (request) => {
   const auth = await requireApiUser(request); if (auth.response) return auth.response;
   const input = schema.parse(await request.json());
-  try { authorizeFieldContext(auth.user, input.orderId); }
-  catch { return Response.json({ message: "A gravação não pertence à sua obra ativa." }, { status: 403 }); }
   const nonce = "sess_" + input.sessionId;
   const source = "campo:" + auth.user.id + ":" + nonce;
   const persisted = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((entry) => entry.messageId === source);
-  if (persisted) return Response.json({ entry: persisted, operation: { status: "diary", message: "Gravação já consolidada, sem duplicar ações." } });
+  if (persisted) {
+    try {
+      if(persisted.serviceOrderId!==input.orderId || (persisted.kind==="FINANCIAL"&&!canViewServiceOrderFinancials(auth.user)))throw new FieldError("Sem acesso ao registro.");
+      if(["office","warehouse"].includes(input.orderId))authorizeFieldContext(auth.user,input.orderId);
+      else authorizeServiceOrderAccess(auth.user,input.orderId,"history");
+    }catch{return Response.json({message:"Sem acesso à gravação."},{status:403});}
+    return Response.json({ entry: persisted, operation: { status: "diary", message: persisted.assistantReply || "Gravação já consolidada, sem duplicar ações." } });
+  }
+  try { authorizeFieldContext(auth.user, input.orderId); }
+  catch { return Response.json({ message: "A gravação não pertence à sua obra ativa." }, { status: 403 }); }
   const retry = await consumeRateLimit("field-finalize", auth.user.id, 45, 60 * 60_000);
   if (retry) return Response.json({ message: "Muitas gravações finalizadas nesta hora." }, { status: 429 });
   const entries = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal]

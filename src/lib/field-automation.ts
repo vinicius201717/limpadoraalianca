@@ -4,19 +4,22 @@ import { fieldActionSchema, diaryAction, type FieldAction } from "./field-action
 import { interpretFieldCommand } from "./field-command-ai";
 import { appendFieldEntry, authorizeFieldContext, fieldActor, fieldAssignment, FieldError } from "./field-assistant";
 import { authorizeServiceOrderAccess } from "./service-order-access";
-import { canManageStock, canRequestServiceMaterials, canViewServiceOrderFinancials } from "./permissions";
+import { canManageStock, canRequestServiceMaterials, canViewServiceOrderFinancials, canValidateChecklistItem, canUpdateServiceOrderStatus } from "./permissions";
 import { pendingFinancialReceipts, settleFieldReceipt } from "./field-receipts";
 import {
   assignChecklistItem, blockChecklistItem, completeChecklistItem, createChecklistItem,
   db, getLinkedEmployeeId, isEmployeeAssignedToServiceOrder, isOpenServiceOrderForTeam,
-  recordAuditLog, startChecklistItem,
+  recordAuditLog, startChecklistItem, validateChecklistItem,
 } from "./store";
+import { getServiceOrderTransitionError } from "./service-order-transitions";
+import { roundMoney } from "./finance-operations";
+import { dateOnly } from "./commercial-schema";
 import { applyEquipmentMovement, applyMaterialMovement, InventoryError, isArchivedStockItem } from "./inventory-operations";
 import type { AssistantAttachment, WorkHistoryEntry } from "./whatsapp-types";
 import type { Material, ServiceOrder, ServiceOrderEquipment, ServiceOrderMaterial, SessionUser } from "./types";
 
 type UiDirective = { kind: "THEME" | "ORDER" | "REPORT"; value: string };
-type Outcome = { checklist?: WorkHistoryEntry["checklistReply"]; message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string; ui?: UiDirective };
+type Outcome = { finishOrder?: ServiceOrder; checklist?: WorkHistoryEntry["checklistReply"]; message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string; ui?: UiDirective };
 const rounded = (n: number) => Math.round(n * 1e6) / 1e6;
 const comparable = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
 const operational = (role: string) => ["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO"].includes(role);
@@ -105,8 +108,8 @@ export function fieldSpeechContext(user: SessionUser, orderId: string) {
   const current = ["warehouse", "office"].includes(orderId) ? null : db.serviceOrders.find((o) => o.id === orderId)!;
   const team = (["OWNER", "GERENTE"].includes(user.role) ? db.employees : current ? db.employees.filter((e) => e.status === "ACTIVE" && isEmployeeAssignedToServiceOrder(current, e.id)) : [])
     .map(({ id, name }) => ({ id, name }));
-  const checklist = current ? db.serviceOrderChecklistItems.filter((i) => i.serviceOrderId === current.id && !["DONE", "CANCELED"].includes(i.status))
-    .slice(-100).map((i) => ({ id: i.id, title: i.title, status: i.status, assignedEmployeeIds: i.assignedEmployeeIds || [] })) : [];
+  const checklist = current ? db.serviceOrderChecklistItems.filter((i) => i.serviceOrderId === current.id && i.status !== "CANCELED" && (i.status !== "DONE" || (!i.validatedAt && canValidateChecklistItem(user.role))))
+    .slice(-100).map((i) => ({ id: i.id, title: i.title, status: i.status, validated: Boolean(i.validatedAt && i.validatedByUserId), assignedEmployeeIds: i.assignedEmployeeIds || [] })) : [];
   const materials = stockAllowed(user) || canRequestServiceMaterials(user.role) ? db.materials
     .filter((m) => !isArchivedStockItem(m)).slice(0, 350).map((m) => ({ id: m.id, name: m.name, unit: m.unit, available: m.currentStock })) : [];
   const equipment = stockAllowed(user) ? db.equipment.filter((e) => !isArchivedStockItem(e)).slice(0, 180)
@@ -121,6 +124,8 @@ export function fieldSpeechContext(user: SessionUser, orderId: string) {
   const confirmationReceiptId = confirmation && confirmation.sessionVersion === (user.sessionVersion ?? 0) && Date.now() - Date.parse(last!.createdAt) < 15 * 60_000 && pendingFinancialReceipts(user, orderId).some(r => r.id === confirmation.id && r.updatedAt === confirmation.updatedAt && r.digital?.amount === confirmation.amount) ? confirmation.id : null;
   return {
     canSettleReceipts: canViewServiceOrderFinancials(user), financialReceipts, confirmationReceiptId,
+    canValidateChecklist: canValidateChecklistItem(user.role), canFinishOrder: canUpdateServiceOrderStatus(user.role),
+    canCreateCharge: Boolean(current && canViewServiceOrderFinancials(user) && current.status !== "CANCELED"),
     authorizedOrders: fieldAssignment(user).orders.map(({ id, title }) => ({ id, title })),
     role: user.role, currentOrder: current ? { id: current.id, title: current.title, status: current.status } : null,
     warehouseMode: orderId === "warehouse", employees: team, checklist, materials, equipment, inventoryOrders, receipts,
@@ -150,9 +155,28 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
     const active=all.filter(i=>i.status!=="CANCELED");
     const pendingOnly=action.action==="LIST_PENDING_CHECKLIST";
     const employees=new Map(db.employees.map(e=>[e.id,e.name]));
-    const items=(pendingOnly?active.filter(i=>i.status!=="DONE"):all).map(i=>({id:i.id,title:i.title,status:i.status,responsible:[...new Set([...(i.assignedEmployeeIds||[]),...(i.assignedEmployeeId?[i.assignedEmployeeId]:[])])].map(id=>employees.get(id)||"Responsável não identificado"),blockedReason:i.blockedReason}));
-    const done=active.filter(i=>i.status==="DONE").length;
+    const checked=(i:typeof all[number])=>i.status==="DONE"&&Boolean(i.validatedAt&&i.validatedByUserId);
+    const items=(pendingOnly?active.filter(i=>!checked(i)):all).map(i=>({id:i.id,title:i.title,status:i.status==="DONE"&&!checked(i)?"AWAITING_VALIDATION":i.status,responsible:[...new Set([...(i.assignedEmployeeIds||[]),...(i.assignedEmployeeId?[i.assignedEmployeeId]:[])])].map(id=>employees.get(id)||"Responsável não identificado"),blockedReason:i.blockedReason}));
+    const done=active.filter(checked).length;
     return {message:pendingOnly?(items.length?"Aqui estão os itens que ainda faltam.":"Não há itens pendentes nesta obra."):"Aqui está o checklist completo da obra.",checklist:{orderTitle:order.title,pendingOnly,total:active.length,done,items}};
+  }
+  if (action.action === "VALIDATE_CHECKLIST") {
+    if (!canValidateChecklistItem(user.role)) throw new FieldError("Seu perfil não pode validar entregas.");
+    const order = requireOpen(currentOrder);
+    authorizeServiceOrderAccess(user, order.id, "checklist");
+    const item = db.serviceOrderChecklistItems.find(i=>i.serviceOrderId===order.id&&i.id===action.checklistItemId);
+    if(!item || item.status!=="DONE") throw new FieldError("Somente um item concluído desta obra pode ser validado.");
+    const checked=validateChecklistItem(order.id,item.id,user);
+    if(!checked.item) throw new FieldError("Não foi possível validar a entrega.");
+    return {message:"Entrega conferida e validada: "+item.title+".",entityId:item.id};
+  }
+  if (action.action === "FINISH_ORDER") {
+    if (!canUpdateServiceOrderStatus(user.role)) throw new FieldError("Seu perfil não pode encerrar obras.");
+    const order=requireOpen(currentOrder);
+    authorizeServiceOrderAccess(user,order.id,"status");
+    const problem=getServiceOrderTransitionError(order,"DONE",db);
+    if(problem)throw new FieldError(problem);
+    return {message:"Obra concluída. A entrega definitiva ainda depende do aceite assinado do cliente.",entityId:order.id,finishOrder:order};
   }
   if (action.action === "LIST_FINANCIAL_RECEIPTS" || action.action === "SETTLE_RECEIPT") {
     if (!canViewServiceOrderFinancials(user)) throw new FieldError("Sem permissao financeira.");
@@ -285,7 +309,7 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
         serviceOrderId: home.id, itemId: item.id, completedByEmployeeId: ids[0],
         completedByEmployeeIds: ids, completedByUserId: user.id, actor: user, completionNotes: description || "Concluído conforme relato do responsável.",
       });
-      if (!completed.item) throw new FieldError(completed.error === "PHOTO_REQUIRED"
+      if (!completed.item) throw new FieldError(completed.error === "ATTENDANCE_CONFLICT" ? "Há falta registrada hoje para um dos executores. Informe quem realmente realizou o serviço." : completed.error === "PHOTO_REQUIRED"
         ? "Este item exige foto de comprovação antes da conclusão."
         : "Não foi possível concluir o item. Confira status e responsáveis.");
       return { message: "Item concluído: " + item.title + ". Por: " + ids.map((id) => db.employees.find((e) => e.id === id)?.name || id).join(", ") + ".", entityId: item.id };
@@ -417,21 +441,25 @@ export async function processFieldStatement(input: {
 }): Promise<FieldStatementResult> {
   const { user, orderId, nonce, text, attachment } = input;
   fieldActor(user);
-  authorizeFieldContext(user, orderId);
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(nonce) || !text.trim() || text.length > 12000)
     throw new FieldError("Relato vazio, longo demais ou com identificador inválido.");
   const source = "campo:" + user.id + ":" + nonce;
   const anyEntry = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((e) => e.messageId === source);
   if (anyEntry) {
     if (anyEntry.serviceOrderId !== orderId) throw new FieldError("Este envio já pertence a outra obra.");
+    if (["office","warehouse"].includes(orderId)) authorizeFieldContext(user,orderId);
+    else authorizeServiceOrderAccess(user,orderId,"history");
+    if (anyEntry.kind==="FINANCIAL" && !canViewServiceOrderFinancials(user)) throw new FieldError("Sem permissão financeira.");
     return { entry: anyEntry, operation: { status: "diary", message: anyEntry.assistantReply || "Este relato já estava salvo. Nenhuma ação duplicada." } };
   }
-  const readOnly = input.modelOverride ? undefined : checklistReadIntent(text);
+  authorizeFieldContext(user,orderId);
+  const chargeConfirm = (!input.modelOverride || (input.modelOverride.action==="CREATE_CHARGE" && input.modelOverride.confidence==="HIGH")) && /^confirmo (?:a )?cobranca[.! ]*$/.test(comparable(text));
+  const readOnly = input.modelOverride || chargeConfirm ? undefined : checklistReadIntent(text);
   const context = readOnly ? null : fieldSpeechContext(user, orderId);
   let action = diaryAction();
   let advisory = "";
   try {
-    action = fieldActionSchema.parse(input.modelOverride ?? readOnly ?? await interpretFieldCommand(text, context));
+    action = fieldActionSchema.parse(chargeConfirm ? {...diaryAction(),action:"CREATE_CHARGE"} : input.modelOverride ?? readOnly ?? await interpretFieldCommand(text, context));
   } catch {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
   }
@@ -455,9 +483,42 @@ export async function processFieldStatement(input: {
     currentUser.role !== user.role || (currentUser.sessionVersion ?? 0) !== (user.sessionVersion ?? 0))
     throw new FieldError("Sua sessão ou permissão mudou. Entre novamente antes de registrar.");
   authorizeFieldContext(currentUser, orderId);
+  let chargePreview: WorkHistoryEntry["chargeConfirmation"];
+  let chargeResult: Outcome | undefined;
+  if (action.action === "CREATE_CHARGE") {
+    try {
+      if(!canViewServiceOrderFinancials(currentUser))throw new FieldError("Somente perfis financeiros autorizados podem criar cobranças.");
+      const order=db.serviceOrders.find(o=>o.id===orderId&&o.status!=="CANCELED");
+      if(!order)throw new FieldError("Selecione a obra da cobrança.");
+      authorizeServiceOrderAccess(currentUser,order.id,"read");
+      const scheduled=roundMoney(db.servicePayments.filter(p=>p.serviceOrderId===order.id).reduce((s,p)=>s+p.amount,0));
+      const last=[...db.workHistory].reverse().find(e=>e.userId===currentUser.id&&e.serviceOrderId===orderId&&!e.recordingSessionId);
+      const prior=last?.chargeConfirmation;
+      if(chargeConfirm){
+        if(!prior || prior.sessionVersion!==(currentUser.sessionVersion??0) || Date.now()-Date.parse(last!.createdAt)>=15*60_000 || prior.contracted!==order.revenue || prior.scheduled!==scheduled)throw new FieldError("Cobrança não apresentada, expirada ou saldo alterado. Solicite novamente.");
+        if(roundMoney(scheduled+prior.amount)>roundMoney(order.revenue))throw new FieldError("A cobrança ultrapassa o valor contratado.");
+        const payment={id:"payment-"+randomUUID(),serviceOrderId:order.id,description:prior.description,amount:prior.amount,dueAt:prior.dueAt,receipts:[],createdAt:new Date().toISOString(),createdByUserId:currentUser.id};
+        db.servicePayments.push(payment);
+        recordAuditLog({userId:currentUser.id,action:"PAYMENT_CREATE",entity:"ServicePayment",entityId:payment.id,newValueJson:payment});
+        chargeResult={message:"Cobrança registrada: "+prior.description+" | R$ "+prior.amount.toFixed(2)+" | vencimento "+prior.dueAt+". Nenhum recebimento ou envio ao cliente foi realizado.",entityId:payment.id};
+      }else{
+        if(action.confidence!=="HIGH" || !/\b(cobranca|cobrar|parcela)\b/.test(comparable(text)) || /\b(nao|cancelar)\b/.test(comparable(text)))throw new FieldError("Peça explicitamente a criação de uma cobrança ou parcela.");
+        const amount=action.financialAmount, due=action.dueAt, description=action.title.trim();
+        if(!amount || amount!==roundMoney(amount) || !due || !dateOnly.safeParse(due).success || description.length<3 || description.length>180)throw new FieldError("Informe descrição, valor em reais e vencimento da cobrança.");
+        if(roundMoney(scheduled+amount)>roundMoney(order.revenue))throw new FieldError("A cobrança ultrapassa o valor contratado. Confira as parcelas existentes.");
+        if(db.servicePayments.some(p=>p.serviceOrderId===order.id&&p.amount===amount&&p.dueAt===due&&comparable(p.description)===comparable(description)))throw new FieldError("Já existe cobrança com essa descrição, valor e vencimento. Confira as parcelas.");
+        chargePreview={description,amount,dueAt:due,sessionVersion:currentUser.sessionVersion??0,contracted:order.revenue,scheduled};
+        action={...diaryAction(),action:"CLARIFY",question:"Confira a cobrança de "+order.title+": "+description+" | R$ "+amount.toFixed(2)+" | vencimento "+due+". Para registrar, diga confirmo cobrança."};
+      }
+    }catch(error){action={...diaryAction(),action:"CLARIFY",question:error instanceof FieldError?error.message:"Não foi possível preparar a cobrança."};}
+  }
+  if (["VALIDATE_CHECKLIST","FINISH_ORDER"].includes(action.action) && (/\b(nao|talvez|se|quando|posso|podemos|preciso saber)\b/.test(comparable(text)) || text.includes("?") || (action.action==="FINISH_ORDER"&&!/\b(obra|servico|os)\b/.test(comparable(text))) || !(action.action==="VALIDATE_CHECKLIST"?/\b(valid[ae]\w*|conferi|confirme|confirmo|aprov[ae]\w*)\b/:/\b(encerr[ae]\w*|finaliz[ae]\w*|conclu[ai]\w*)\b/).test(comparable(text)))){
+    action={...diaryAction(),action:"CLARIFY",question:"Confirme explicitamente a validação do item ou o encerramento da obra."};
+  }
   let outcome: Outcome = { message: "Relato registrado no diário." };
   let status: "executed" | "diary" | "pending" = "diary";
-  if (advisory) {
+  if (chargeResult) { outcome=chargeResult; status="executed"; }
+  else if (advisory) {
     outcome.message = advisory;
     status = "pending";
   } else if (action.action === "CLARIFY" || action.confidence === "LOW") {
@@ -472,7 +533,7 @@ export async function processFieldStatement(input: {
       status = "pending";
     }
   }
-  const financialAction = (["LIST_FINANCIAL_RECEIPTS", "SETTLE_RECEIPT"].includes(action.action) || !!previewReceiptId) && canViewServiceOrderFinancials(currentUser);
+  const financialAction = (["LIST_FINANCIAL_RECEIPTS", "SETTLE_RECEIPT", "CREATE_CHARGE"].includes(action.action) || !!previewReceiptId || !!chargePreview || !!chargeResult || chargeConfirm) && canViewServiceOrderFinancials(currentUser);
   const summary = status === "executed" ? "Ação executada: " + outcome.message
     : status === "pending" ? "Pendente, sem alteração automática: " + outcome.message
     : "Registrado sem ação automática.";
@@ -480,10 +541,17 @@ export async function processFieldStatement(input: {
     : "Relato: " + text.slice(0, 8500).trim() + "\n\n" + summary.slice(0, Math.max(0, 11950 - text.slice(0, 8500).trim().length));
   const entry = appendFieldEntry({
     user: currentUser, orderId, nonce,
-    title: financialAction ? (action.action === "LIST_FINANCIAL_RECEIPTS" ? "Consulta financeira" : "Baixa financeira") : status === "executed" ? "Registro e operação de campo" : status === "pending" ? "Relato pendente de esclarecimento" : "Relato de campo",
+    title: financialAction ? (chargePreview || chargeResult || chargeConfirm ? "Cobrança financeira" : action.action === "LIST_FINANCIAL_RECEIPTS" ? "Consulta financeira" : "Baixa financeira") : status === "executed" ? "Registro e operação de campo" : status === "pending" ? "Relato pendente de esclarecimento" : "Relato de campo",
     content, transcript: input.summaryOnly ? "" : text, attachment,
   });
   entry.assistantReply=outcome.message;
+  if (chargePreview) entry.chargeConfirmation=chargePreview;
+  if (outcome.finishOrder) {
+    const order=outcome.finishOrder;
+    const oldStatus=order.status;
+    order.status="DONE";
+    recordAuditLog({userId:currentUser.id,action:"UPDATE_SERVICE_ORDER_STATUS",entity:"ServiceOrder",entityId:order.id,oldValueJson:{status:oldStatus},newValueJson:{status:"DONE",sourceMessageId:source}});
+  }
   if (outcome.checklist) entry.checklistReply=outcome.checklist;
   if (financialAction) {
     entry.kind = "FINANCIAL";

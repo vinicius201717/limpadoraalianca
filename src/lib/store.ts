@@ -1754,6 +1754,11 @@ export function completeChecklistItem(input: {
     return { item: null, photos: [], error: "EMPLOYEE_NOT_IN_TEAM" as const };
   }
 
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  if (db.staffAttendanceReports.some(r => r.kind === "ABSENCE" && r.status === "REPORTED" && r.occurredOn === today && completedEmployeeIds.includes(r.employeeId))) {
+    return { item: null, photos: [], error: "ATTENDANCE_CONFLICT" as const };
+  }
+
   const incomingPhotos = input.photos ?? [];
   if (incomingPhotos.some((photo) => !validatePhotoInput(photo))) {
     return { item: null, photos: [], error: "INVALID_PHOTO" as const };
@@ -1824,6 +1829,7 @@ export function validateChecklistItem(serviceOrderId: string, itemId: string, ac
   const item = getChecklistItem(serviceOrderId, itemId);
   if (!item) return { item: null, error: "NOT_FOUND" as const };
   if (item.status !== "DONE") return { item: null, error: "NOT_DONE" as const };
+  if (item.validatedAt && item.validatedByUserId) return { item, error: null };
   const oldValueJson = { ...item };
   item.validatedByUserId = actor.id;
   item.validatedAt = new Date().toISOString();

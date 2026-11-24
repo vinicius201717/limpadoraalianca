@@ -37,6 +37,7 @@ export type WorkHistoryEntry = {
   title: string; content: string; transcript: string; messageId: string;
   attachment?: AssistantAttachment; recordingSessionId?: string; createdAt: string;
   receiptConfirmation?: { id: string; updatedAt: string; amount: number; sessionVersion: number };
+  chargeConfirmation?: { description: string; amount: number; dueAt: string; sessionVersion: number; contracted: number; scheduled: number };
   assistantReply?: string;
   checklistReply?: { orderTitle: string; pendingOnly: boolean; total: number; done: number; items: Array<{id:string;title:string;status:string;responsible:string[];blockedReason?:string}> };
 };

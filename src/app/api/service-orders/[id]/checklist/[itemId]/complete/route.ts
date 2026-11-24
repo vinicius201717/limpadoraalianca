@@ -73,6 +73,7 @@ async function POSTHandler(
     photos: storedPhotos,
   });
 
+  if (result.error === "ATTENDANCE_CONFLICT") return NextResponse.json({ message: "Há falta registrada hoje para um dos executores. Confirme quem realmente realizou o serviço antes de concluir." }, { status: 409 });
   if (result.error === "EMPLOYEE_NOT_IN_TEAM") {
     return NextResponse.json({ message: "Colaborador nao pertence a equipe desta OS." }, { status: 400 });
   }

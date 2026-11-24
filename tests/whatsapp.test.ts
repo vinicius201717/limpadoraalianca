@@ -45,6 +45,7 @@ function incoming(id: string, text: string, extra: Partial<WhatsAppMessage> = {}
 type Row = { data: Record<string, unknown>; updated_at: string };
 const rows = new Map<string, Row>();
 let nextIntent: AssistantIntent;
+let fixtureTranscript = "Na obra a, registramos a preparação do piso.";
 let failWrite = false; let failDelivery = false; let aiCalls = 0; let audioCalls = 0; let reportMode = false;
 let beforeDeliveryResponse: ((trackingId: string, messageId: string) => Promise<void>) | undefined;
 const deliveries: string[] = []; const prompts: string[] = [];
@@ -52,7 +53,7 @@ const state = () => rows.get(APP_STATE_ID)!.data;
 function request(path: string, user: SystemUser = owner) { return new NextRequest(`http://localhost:3000${path}`, { headers: { cookie: `floor_session=${signSessionToken(user)}` } }); }
 beforeEach(() => {
   failWrite = false; failDelivery = false; aiCalls = 0; audioCalls = 0; reportMode = false; deliveries.length = 0; prompts.length = 0; nextIntent = intent(); rows.clear();
-  beforeDeliveryResponse = undefined;
+  beforeDeliveryResponse = undefined; fixtureTranscript = "Na obra a, registramos a preparação do piso.";
   rows.set(APP_STATE_ID, { data: { users: [owner, supervisor, finance, manager, collaborator].map((user) => structuredClone(user)), serviceOrders: [order("a"), order("b")], employees: [employee("worker", collaborator.id), employee("sup-employee", supervisor.id), employee("outsider")], serviceOrderEmployees: [{ id: "team", serviceOrderId: "a", employeeId: "worker", roleInService: "AUXILIAR", assignedByUserId: "owner", assignedAt: "", createdAt: "", updatedAt: "" }], servicePayments: [{ id: "payment", serviceOrderId: "a", description: "Parcela 1", amount: 100, dueAt: "2026-12-01", createdAt: "", createdByUserId: "owner", receipts: [] }] }, updated_at: "2026-01-01T00:00:00.000Z" });
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -76,7 +77,7 @@ beforeEach(() => {
       return Response.json({ url: "https://lookaside.fbsbx.com/media", mime_type: "audio/ogg", file_size: 24 });
     }
     if (url.origin === "https://lookaside.fbsbx.com") return new Response(new Uint8Array(Buffer.from("OggS00000000000000000000")));
-    if (url.origin === "https://api.openai.com" && url.pathname === "/v1/audio/transcriptions") { audioCalls++; return Response.json({ text: "Na obra a, registramos a preparação do piso." }); }
+    if (url.origin === "https://api.openai.com" && url.pathname === "/v1/audio/transcriptions") { audioCalls++; return Response.json({ text: fixtureTranscript }); }
     if (url.origin === "https://api.openai.com" && url.pathname === "/v1/responses") {
       aiCalls++; prompts.push(String(init?.body));
       return Response.json({ id: "resp_fixture", object: "response", created_at: Math.floor(Date.now() / 1000), model: "gpt-6.2-sol", status: "completed", output: [{ type: "message", id: "msg_fixture", role: "assistant", status: "completed", content: [{ type: "output_text", text: reportMode ? "Relatório baseado no relato de preparação do piso [a]." : JSON.stringify(nextIntent), annotations: [] }] }], usage: { input_tokens: 20, output_tokens: 20, total_tokens: 40, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } });
@@ -912,7 +913,7 @@ test("field checklist consultation is read-only, scoped to the assigned work and
   const now = new Date().toISOString();
   await assistantTransaction(()=>{
     const make=(id:string,serviceOrderId:string,title:string,status:import("../src/lib/types").ChecklistItemStatus,sortOrder:number)=>({id,serviceOrderId,title,description:"",sortOrder,status,isRequired:true,requiresPhoto:false,minimumPhotos:0,assignedEmployeeIds:["worker"],createdByUserId:owner.id,createdAt:now,updatedAt:now});
-    db.serviceOrderChecklistItems.push(make("p","a","Limpar vidros","PENDING",2),make("d","a","Limpar piso","DONE",1),make("b","a","Área externa","BLOCKED",3),make("c","a","Cancelado","CANCELED",4),make("x","b","Obra alheia","PENDING",0));
+    db.serviceOrderChecklistItems.push(make("p","a","Limpar vidros","PENDING",2),{...make("d","a","Limpar piso","DONE",1),validatedAt:now,validatedByUserId:supervisor.id},make("b","a","Área externa","BLOCKED",3),make("c","a","Cancelado","CANCELED",4),make("x","b","Obra alheia","PENDING",0));
   });
   const ask=async(text:string,nonce:string)=>{
     let result!:Awaited<ReturnType<typeof processFieldStatement>>;
@@ -1031,4 +1032,106 @@ test("progress reminders only appear after three hours without real checklist ac
       assert.equal(progress(new Date("2026-12-02T19:50:00Z")).length,0);
     });
   }finally{if(oldHours===undefined)delete process.env.FIELD_REMINDER_HOURS;else process.env.FIELD_REMINDER_HOURS=oldHours;if(oldStale===undefined)delete process.env.FIELD_PROGRESS_STALE_HOURS;else process.env.FIELD_PROGRESS_STALE_HOURS=oldStale;}
+});
+
+
+test("integrated fictional day: supervisor audio, team, custody, finance, validation and signed delivery",async()=>{
+  const {audioTestData}=await import("../scripts/audio-test-data.mjs");
+  const scenario=await audioTestData();
+  rows.set(APP_STATE_ID,{data:scenario,updated_at:new Date().toISOString()});
+  const actor=(slug:string)=>scenario.users.find(u=>u.id==="teste-"+slug)! as SystemUser;
+  const ana=actor("supervisor"), carlos=actor("carlos"), juliana=actor("juliana"), gerente=actor("gerente"), fin=actor("financeiro");
+  const id="teste-os-aurora",ctx={params:Promise.resolve({id})};
+  const day=new Date().toISOString().slice(0,10);
+  const api=(path:string,user:SystemUser,method:string,body?:unknown)=>new NextRequest("http://localhost:3000"+path,{method,headers:{cookie:"floor_session="+signSessionToken(user),"content-type":"application/json"},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  const ok=async(res:Response,expected:number,label:string)=>{const data=await res.json();assert.equal(res.status,expected,label+" "+JSON.stringify(data));console.log("[DAY] "+label+" HTTP "+res.status);return data;};
+  const command=async(user:SystemUser,nonce:string,overrides:Partial<FieldAction>,text:string)=>{const r=await runFieldCommand(user,id,"day-simulation-"+nonce,fieldCommand(overrides),text);assert.equal(r.operation.status,"executed",r.operation.message);console.log("[DAY] "+r.operation.message);return r;};
+  await assistantTransaction(()=>{assert.equal(fieldAssignment(ana).orderId,id);assert.throws(()=>authorizeFieldContext(ana,"teste-os-horizonte"));const order=db.serviceOrders.find(o=>o.id===id)!;order.clientAccessCode="ALI-TESTE-AURORA";order.clientAccessEnabled=true;});
+  const {POST:audio}=await import("../src/app/api/campo/audio/route");
+  fixtureTranscript="Coloca o Carlos e a Juliana para limpar os rodapés da sala.";
+  nextIntent=fieldCommand({action:"CREATE_CHECKLIST",title:"Limpeza dos rodapés",employeeIds:["teste-emp-carlos","teste-emp-juliana"]}) as unknown as AssistantIntent;
+  const wav=Buffer.alloc(16044);wav.write("RIFF");wav.writeUInt32LE(wav.length-8,4);wav.write("WAVEfmt ",8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write("data",36);wav.writeUInt32LE(16000,40);
+  const form=new FormData();form.set("orderId",id);form.set("nonce","day-voice-create-0001");form.set("audio",new File([wav],"simulado.wav",{type:"audio/wav"}));
+  const result=await ok(await audio(new NextRequest("http://localhost:3000/api/campo/audio",{method:"POST",headers:{cookie:"floor_session="+signSessionToken(ana)},body:form}),undefined),200,"Audio multipart (provedor simulado)");
+  assert.equal(result.entry.transcript,fixtureTranscript);assert.equal(result.operation.status,"executed",result.operation.message);assert.equal(audioCalls,1);assert.equal(aiCalls,1);
+  const extra=result.operation.entityId as string;
+  await assistantTransaction(()=>{const i=db.serviceOrderChecklistItems.find(x=>x.id===extra)!;assert.equal(i.createdByUserId,ana.id);assert.deepEqual(i.assignedEmployeeIds,["teste-emp-carlos","teste-emp-juliana"]);});
+  const {POST:complete}=await import("../src/app/api/service-orders/[id]/checklist/[itemId]/complete/route");
+  const {POST:validate}=await import("../src/app/api/service-orders/[id]/checklist/[itemId]/validate/route");
+  const {POST:unblock}=await import("../src/app/api/service-orders/[id]/checklist/[itemId]/unblock/route");
+  const {PATCH:status}=await import("../src/app/api/service-orders/[id]/status/route");
+  const path=(itemId:string,action:string)=>"/api/service-orders/"+id+"/checklist/"+itemId+"/"+action;
+  const itemCtx=(itemId:string)=>({params:Promise.resolve({id,itemId})});
+  const statusPath="/api/service-orders/"+id+"/status";
+  await ok(await status(api(statusPath,ana,"PATCH",{status:"DONE"}),ctx),409,"Bloqueio de encerramento prematuro");
+  await ok(await complete(api(path(extra,"complete"),carlos,"POST",{completedByEmployeeId:"teste-emp-carlos",completedByEmployeeIds:["teste-emp-carlos","teste-emp-juliana"]}),itemCtx(extra)),200,"Entrega pelos dois colaboradores");
+  await assistantTransaction(async()=>{const {fieldNotices}=await import("../src/lib/field-notifications");assert.ok(fieldNotices(ana).some(n=>n.title==="Serviço aguardando sua conferência"&&n.body.includes("rodapés")));});
+  await ok(await validate(api(path(extra,"validate"),carlos,"POST"),itemCtx(extra)),403,"Colaborador não valida a própria entrega");
+  await command(ana,"validate-extra",{action:"VALIDATE_CHECKLIST",checklistItemId:extra},"Valide a limpeza dos rodapés.");
+  const pending=await command(ana,"pending",{action:"LIST_PENDING_CHECKLIST"},"Me fala o que ainda falta.");
+  assert.equal(pending.entry.checklistReply?.items.length,4);
+  await command(ana,"absence",{action:"REPORT_ABSENCE",employeeIds:["teste-emp-pedro"],occurredOn:day},"O Pedro faltou hoje.");
+  await command(ana,"early",{action:"REPORT_EARLY_LEAVE",employeeIds:["teste-emp-juliana"],occurredOn:day,occurredAt:"15:30"},"A Juliana saiu às quinze e trinta.");
+  const blockedAttendance=await runFieldCommand(ana,id,"day-absent-complete-01",fieldCommand({action:"COMPLETE_CHECKLIST",checklistItemId:"teste-check-2",employeeIds:["teste-emp-pedro"]}),"Conclua a limpeza dos banheiros pelo Pedro.");
+  assert.equal(blockedAttendance.operation.status,"pending");assert.match(blockedAttendance.operation.message,/falta registrada/);
+  await ok(await complete(api(path("teste-check-2","complete"),ana,"POST",{completedByEmployeeId:"teste-emp-pedro"}),itemCtx("teste-check-2")),409,"Bloqueio de conclusão por funcionário ausente no painel");
+  await command(ana,"reassign-absent",{action:"ASSIGN_CHECKLIST",checklistItemId:"teste-check-2",employeeIds:["teste-emp-carlos"]},"Acrescente Carlos à limpeza dos banheiros.");
+  const requestMaterial=await command(ana,"request",{action:"REQUEST_MATERIAL",materialId:"teste-mat-pano",quantity:3,unit:"un"},"Pede três panos de microfibra.");
+  const {PATCH:materialPatch}=await import("../src/app/api/service-orders/[id]/material-requests/route");
+  const matPath="/api/service-orders/"+id+"/material-requests";
+  for(const s of ["APPROVED","SEPARATED","DELIVERED"])await ok(await materialPatch(api(matPath,gerente,"PATCH",{id:requestMaterial.operation.entityId,status:s}),ctx),200,"Solicitação material "+s);
+  await command(gerente,"return-detergente",{action:"STOCK_RETURN",materialId:"teste-mat-detergente",quantity:3,unit:"L"},"Devolve três litros de detergente.");
+  await command(gerente,"return-fibra",{action:"STOCK_RETURN",materialId:"teste-mat-fibra",quantity:5,unit:"un"},"Devolve cinco fibras.");
+  await command(gerente,"return-pano",{action:"STOCK_RETURN",materialId:"teste-mat-pano",quantity:3,unit:"un"},"Devolve três panos.");
+  const {POST:expense}=await import("../src/app/api/finance/expenses/route");
+  const fuel={serviceOrderId:id,employeeId:"teste-emp-carlos",category:"GASOLINA",amount:50,notes:"Abastecimento fictício"};
+  await ok(await expense(api("/api/finance/expenses",ana,"POST",fuel),undefined),403,"Supervisor sem baixa financeira direta");
+  await ok(await expense(api("/api/finance/expenses",fin,"POST",fuel),undefined),201,"Abastecimento R$ 50");
+  const {POST:payment}=await import("../src/app/api/finance/payments/route");
+  await ok(await payment(api("/api/finance/payments",fin,"POST",{action:"receive",paymentId:id+"-parcela-2",amount:2400,paidAt:day,method:"PIX",reference:"PIX-FICTICIO-DAY-2400"}),undefined),201,"Recebimento saldo R$ 2.400");
+  await ok(await unblock(api(path("teste-check-3","unblock"),ana,"POST"),itemCtx("teste-check-3")),200,"Desbloqueio após retirada de entulho");
+  for(const [itemId,worker] of [["teste-check-1",juliana],["teste-check-2",carlos],["teste-check-3",carlos],["teste-check-4",juliana]] as const){
+    await command(ana,"finish-"+itemId,{action:"COMPLETE_CHECKLIST",checklistItemId:itemId,employeeIds:[worker.linkedEmployeeId!]},"Confirme a conclusão da tarefa.");
+    await command(ana,"validate-"+itemId,{action:"VALIDATE_CHECKLIST",checklistItemId:itemId},"Valide o item concluído.");
+  }
+  await command(ana,"finish-order",{action:"FINISH_ORDER"},"Encerre a obra.");
+  await ok(await status(api(statusPath,ana,"PATCH",{status:"DELIVERED"}),ctx),409,"Entrega bloqueada sem aceite do cliente");
+  const {POST:delivery}=await import("../src/app/api/public/service-tracking/delivery/route");
+  const signature="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFZsAAAAASUVORK5CYII=";
+  await ok(await delivery(new NextRequest("http://localhost:3000/api/public/service-tracking/delivery",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:"ALI-TESTE-AURORA",clientName:"Cliente Fictício",rating:5,feedback:"Serviço conferido",signatureDataUrl:signature})}),undefined),200,"Aceite fictício do cliente");
+  await assistantTransaction(()=>{const order=db.serviceOrders.find(o=>o.id===id)!;const items=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===id);assert.equal(order.status,"DELIVERED");assert.equal(order.expenses,430);assert.equal(items.length,6);assert.ok(items.every(i=>i.status==="DONE"&&i.validatedAt));assert.equal(db.staffAttendanceReports.length,2);const payments=db.servicePayments.filter(p=>p.serviceOrderId===id);assert.equal(payments.flatMap(p=>p.receipts).reduce((s,r)=>s+r.amount,0),4800);assert.equal(db.serviceOrders.find(o=>o.id==="teste-os-horizonte")!.expenses,150);console.log("[DAY] FINAL: 6 itens validados; receita recebida R$ 4800; despesas R$ 430; 2 ocorrências; obra entregue; segunda obra intacta.");});
+});
+
+
+test("voice charge requires authorized finance role, explicit scoped confirmation, valid balance and one-time commit",async()=>{
+  const charge=fieldCommand({action:"CREATE_CHARGE",title:"Segunda parcela",financialAmount:300,dueAt:"2026-12-20"});
+  const ask=(user:SystemUser,nonce:string,action=charge,text="Crie a cobrança da segunda parcela de 300 reais para 20 de dezembro.")=>runFieldCommand(user,"a","charge-"+nonce,action,text);
+  assert.equal((await ask(supervisor,"denied-0001")).operation.status,"pending");
+  assert.equal((await ask(manager,"denied-0002")).operation.status,"pending");
+  assert.equal((await ask(finance,"early-000001",charge,"confirmo cobrança")).operation.status,"pending");
+  const preview=await ask(finance,"preview-00001");assert.equal(preview.operation.status,"pending");assert.match(preview.operation.message,/300.00/);
+  await assistantTransaction(()=>assert.equal(db.servicePayments.length,1));
+  const done=await ask(finance,"confirm-00001",charge,"confirmo cobrança");assert.equal(done.operation.status,"executed");
+  await assistantTransaction(()=>{assert.equal(db.servicePayments.length,2);const p=db.servicePayments[1];assert.equal(p.amount,300);assert.equal(p.dueAt,"2026-12-20");assert.equal(p.receipts.length,0);});
+  await ask(finance,"confirm-00001",charge,"confirmo cobrança");
+  assert.equal((await ask(finance,"again-000001",charge,"confirmo cobrança")).operation.status,"pending");
+  assert.equal((await ask(finance,"exceeds-0001",fieldCommand({...charge,financialAmount:700}))).operation.status,"pending");
+  await ask(finance,"preview-00002",fieldCommand({...charge,financialAmount:100}));
+  await assistantTransaction(()=>{db.serviceOrders.find(o=>o.id==="a")!.revenue=1200;});
+  assert.equal((await ask(finance,"changed-0001",charge,"confirmo cobrança")).operation.status,"pending");
+  await assistantTransaction(()=>assert.equal(db.servicePayments.length,2));
+});
+test("voice validation rejects unfinished items, negated commands and other roles; closure cannot bypass checklist",async()=>{
+  const created=await runFieldCommand(supervisor,"a","validation-create-001",fieldCommand({action:"CREATE_CHECKLIST",title:"Limpar sala",employeeIds:["worker"]}));
+  const id=created.operation.entityId!;
+  const validate=fieldCommand({action:"VALIDATE_CHECKLIST",checklistItemId:id});
+  assert.equal((await runFieldCommand(supervisor,"a","validate-pending-01",validate,"Valide a sala.")).operation.status,"pending");
+  assert.equal((await runFieldCommand(supervisor,"a","close-pending-00001",fieldCommand({action:"FINISH_ORDER"}),"Encerre a obra.")).operation.status,"pending");
+  await runFieldCommand(supervisor,"a","validate-complete-1",fieldCommand({action:"COMPLETE_CHECKLIST",checklistItemId:id,employeeIds:["worker"]}));
+  assert.equal((await runFieldCommand(supervisor,"a","validate-negative-1",validate,"Não valide a sala.")).operation.status,"pending");
+  assert.equal((await runFieldCommand(finance,"a","validate-denied-001",validate,"Valide a sala.")).operation.status,"pending");
+  const valid=await runFieldCommand(supervisor,"a","validate-success-01",validate,"Valide a sala.");assert.equal(valid.operation.status,"executed");
+  await runFieldCommand(supervisor,"a","validate-repeat-001",validate,"Valide a sala.");
+  await assistantTransaction(()=>assert.equal(db.serviceOrderChecklistEvents.filter(e=>e.checklistItemId===id&&e.type==="VALIDATED").length,1));
+  assert.equal((await runFieldCommand(supervisor,"a","close-question-0001",fieldCommand({action:"FINISH_ORDER"}),"Posso encerrar a obra?")).operation.status,"pending");
 });

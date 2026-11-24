@@ -35,12 +35,14 @@ ALMOXARIFADO e gestão: "chegaram 5 galões de X" para produto cadastrado: STOCK
 "voltaram 2 unidades de X": STOCK_RETURN; "gastaram 2 unidades": STOCK_CONSUME; "danificou 1": STOCK_DAMAGE; "perdeu 1": STOCK_LOSS, mas nunca confunda essas ações.
 Máquina/ferramenta com código único: EQUIPMENT_DISPATCH / EQUIPMENT_RETURN / EQUIPMENT_DAMAGE. Não confunda com consumíveis.
 Não invente IDs de obras, produtos, equipamentos, itens ou colaboradores: use EXATAMENTE o authorizedContext. Para nome duplicado, pessoa parecida, medida ausente, operação incerta, comando que inclui múltiplas ações independentes ou quantidades contraditórias: CLARIFY e uma pergunta objetiva.
-Não crie advertências formais, demissões ou exclusões por voz. A única operação financeira permitida aqui é SETTLE_RECEIPT conforme a regra acima. Faltas e saídas antecipadas são apenas registros relatados para apuração.
+Quando o supervisor disser explicitamente que conferiu e pede validar um item concluído, use VALIDATE_CHECKLIST com checklistItemId exato dentre itens DONE ainda não validados e canValidateChecklist=true. Não confunda concluir com validar. Pedido de encerrar/finalizar a obra atual: FINISH_ORDER somente com canFinishOrder=true e ordem explícita, nunca por uma pergunta ou relato. O encerramento não equivale ao aceite do cliente.
+Para canCreateCharge=true: pedido explícito de criar uma cobrança/parcela na obra atual => CREATE_CHARGE com title (descrição), financialAmount em reais e dueAt YYYY-MM-DD. Não invente valor, vencimento ou descrição. O backend apresenta os dados e exige a frase "confirmo cobrança" antes de registrar. Não representa recebimento nem envia mensagem ao cliente. Para os demais perfis, CLARIFY. Não confunda cobrança com comprovante, pagamento ou despesa.
+Não crie advertências formais, demissões ou exclusões por voz. As operações financeiras permitidas são SETTLE_RECEIPT e CREATE_CHARGE conforme regras acima. Faltas e saídas antecipadas são apenas registros relatados para apuração.
 Não interprete relato passado como pedido atual de alteração sem comando explícito e contexto inequívoco. Se a frase for cortada em parte por áudio segmentado, classifique como DIARY, não complete com imaginação.
 Não atribua progresso ou conclusão com base apenas em contexto anterior.
 Em descrições de comprovantes, preserve valores apenas quando o usuário os disser explicitamente; isso NÃO autoriza lançamento financeiro. Resumos devem reproduzir o que foi dito sem inventar.
 Se houver pedido de mudar usuário ou acessos, CLARIFY. Mudar obra por voz usa SWITCH_ORDER apenas para obras autorizadas do contexto.
-Se funcionário, dia ou comprovante forem ambíguos, CLARIFY. Quantidade exige número positivo e unidade compatível. Nada de preço.
+Se funcionário, dia ou comprovante forem ambíguos, CLARIFY. Quantidade de material exige número positivo e unidade compatível. Valores financeiros somente para cobrança explicitamente solicitada.
 Se o contexto não tiver IDs certos, CLARIFY. Se houver baixa de material sem vínculo de obra, CLARIFY.`,
     prompt: JSON.stringify({ sourceText: text.slice(0, 12000), authorizedContext }),
     providerOptions: { openai: { store: false } },
