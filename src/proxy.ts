@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { AUTH_COOKIE, verifySessionPayload } from "./lib/session-token";
 
-const publicPaths = ["/login", "/acompanhe-servico", "/politica-de-privacidade", "/exclusao-de-dados"];
+const publicPaths = ["/login", "/acompanhe-servico", "/politica-de-privacidade", "/exclusao-de-dados", "/campo"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

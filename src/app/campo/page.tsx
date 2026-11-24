@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { FieldAssistantView } from "@/components/FieldAssistantView";
+import { FieldLoginView } from "@/components/FieldLoginView";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 export default async function FieldPage() {
   const user = await getCurrentUser();
-  if (!user || !user.isActive) redirect("/login?from=/campo");
-  if (user.mustChangePassword) redirect("/configuracoes");
+  if (!user || !user.isActive) return <FieldLoginView />;
+  if (user.mustChangePassword) return <FieldLoginView changePassword />;
   return <FieldAssistantView userName={user.name} />;
 }
