@@ -750,9 +750,6 @@ export function DashboardView({
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Chip label={data.sourceLabel} color="primary" variant="outlined" />
-          <Button component={Link} href="/apresentacao" variant="contained" endIcon={<ArrowForwardRoundedIcon />}>
-            Ver apresentacao
-          </Button>
         </Stack>
       </Stack>
 

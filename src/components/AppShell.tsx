@@ -44,7 +44,6 @@ import RateReviewRoundedIcon from "@mui/icons-material/RateReviewRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
-import SlideshowRoundedIcon from "@mui/icons-material/SlideshowRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import SupervisorAccountRoundedIcon from "@mui/icons-material/SupervisorAccountRounded";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
@@ -64,7 +63,6 @@ const fallbackShellUser = { role: "COLABORADOR", canViewFinancials: false } as c
 const menuItems = [
   { label: "Assistente de Campo", href: "/campo", icon: <MicRoundedIcon /> },
   { label: "Dashboard", href: "/dashboard", icon: <DashboardRoundedIcon /> },
-  { label: "Apresentacao", href: "/apresentacao", icon: <SlideshowRoundedIcon /> },
   { label: "Usuarios", href: "/usuarios", icon: <SupervisorAccountRoundedIcon /> },
   { label: "Clientes", href: "/clientes", icon: <GroupsRoundedIcon /> },
   { label: "Leads", href: "/leads", icon: <PersonAddAltRoundedIcon /> },
@@ -106,7 +104,7 @@ function canSeeMenuItem(href: string, user: Pick<SessionUser, "role" | "canViewF
   if (href === "/relatorios") {
     return role === "OWNER" || role === "GERENTE" || canViewServiceOrderFinancials(user);
   }
-  if (href === "/supervisores" || href === "/apresentacao") {
+  if (href === "/supervisores") {
     return role === "OWNER" || role === "GERENTE";
   }
   if (href === "/colaboradores") {
