@@ -20,6 +20,7 @@ import {
   Typography,
 } from "@mui/material";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 
 import { formatDateTime } from "@/lib/format";
 import { labelFor } from "@/lib/labels";
@@ -181,6 +182,9 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
                   <TableCell>{row.createdAt ? formatDateTime(row.createdAt) : "-"}</TableCell>
                   <TableCell align="right">
                     <Stack direction="row" spacing={1} justifyContent="flex-end">
+                      <Button component={Link} href={`/usuarios/${encodeURIComponent(row.id)}#assistente-whatsapp-perfil`} size="small" color="success" variant="outlined" startIcon={<WhatsAppIcon />}>
+                        WhatsApp
+                      </Button>
                       {!isProtectedOwner && (
                         <Select
                           value={draftRole}

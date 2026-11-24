@@ -22,6 +22,8 @@ const { actorForPhone, assistantContext, assistantTransaction, confirmCommand, c
 const { parseWhatsAppDeliveryUpdates, parseWhatsAppMessages, verifyWhatsAppSignature, whatsappConfiguration } = await import("../src/lib/whatsapp-provider");
 const { drainWhatsAppQueue } = await import("../src/lib/whatsapp-worker");
 const { signSessionToken } = await import("../src/lib/session-token");
+const { whatsappProfileStatus } = await import("../src/lib/whatsapp-profile");
+const { canUseWhatsApp } = await import("../src/lib/whatsapp-schema");
 const { createWorkReport } = await import("../src/lib/work-reports");
 const owner: SystemUser = { id: "owner", name: "Dona", email: "owner@example.test", role: "OWNER", isActive: true, sessionVersion: 0, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const supervisor: SystemUser = { ...owner, id: "supervisor", name: "Supervisora", role: "SUPERVISOR_OBRA", email: "sup@example.test" };
@@ -97,7 +99,7 @@ test("local media configuration works without Supabase and rejects ephemeral or 
 
 test("link is single-use, expires, requires eligible account and revokes with session", async () => {
   await assistantTransaction(() => {
-    assert.throws(() => createLink(collaborator));
+    assert.throws(() => createLink({ ...collaborator, isActive: false }));
     const link = createLink(owner); assert.equal(db.whatsappLinks[0].tokenHash, digest(link.token));
     assert.ok(!JSON.stringify(db.whatsappLinks).includes(link.token));
     consumeLink(phone, link.token); assert.equal(actorForPhone(phone)?.id, owner.id);
@@ -105,8 +107,31 @@ test("link is single-use, expires, requires eligible account and revokes with se
     db.users[0].sessionVersion = 1; assert.equal(actorForPhone(phone), null);
     const expired = createLink(supervisor); db.whatsappLinks.find((entry) => entry.userId === supervisor.id)!.tokenExpiresAt = "2000-01-01";
     assert.throws(() => consumeLink("5511888888888", expired.token));
+    const workerLink = createLink(collaborator);
+    consumeLink("5511777777777", workerLink.token);
+    assert.equal(actorForPhone("5511777777777")?.id, collaborator.id);
   });
 });
+test("every active account can open its own assistant, without expanding operational permissions", async () => {
+  assert.ok(["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO", "COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"].every((role) => canUseWhatsApp(role as typeof owner.role)));
+  await assistantTransaction(() => {
+    assert.equal(assistantContext(collaborator).orders.length, 1);
+    assert.throws(() => validateIntent(collaborator, intent()), /não pode criar tarefas/);
+    assert.throws(() => validateIntent(collaborator, intent({ action: "ASSIGN_CHECKLIST" })), /não pode criar tarefas/);
+    assert.throws(() => validateIntent(collaborator, intent({ action: "WARN_EMPLOYEE" })), /não pode criar tarefas/);
+    assert.equal(validateIntent(collaborator, intent({ action: "DIARY" })).action, "DIARY");
+    const warehouse = { ...owner, id: "warehouse", role: "ALMOXARIFADO" as const };
+    db.users.push(warehouse);
+    assert.equal(assistantContext(warehouse).orders.length, 0);
+    assert.equal(whatsappProfileStatus(collaborator, db.whatsappLinks).linked, false);
+    const link = createLink(collaborator);
+    consumeLink("5511777777777", link.token);
+    assert.deepEqual(whatsappProfileStatus(collaborator, db.whatsappLinks), { linked: true, maskedPhone: "•••• 7777" });
+    db.users.find((entry) => entry.id === collaborator.id)!.sessionVersion = 1;
+    assert.equal(whatsappProfileStatus(db.users.find((entry) => entry.id === collaborator.id), db.whatsappLinks).linked, false);
+  });
+});
+
 test("a phone cannot be silently bound to a second account", async () => {
   await assistantTransaction(() => { consumeLink(phone, createLink(owner).token); assert.throws(() => consumeLink(phone, createLink(supervisor).token), /outra conta/); });
 });

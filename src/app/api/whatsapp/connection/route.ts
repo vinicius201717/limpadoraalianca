@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
 import { requireApiUser } from "@/lib/api-handlers";
 import { withDatabase } from "@/lib/with-database";
-import { db, getAccessibleServiceOrders, recordAuditLog } from "@/lib/store";
-import { actorForPhone, createLink, replyAccess } from "@/lib/whatsapp-operations";
+import { db, recordAuditLog } from "@/lib/store";
+import { actorForPhone, assistantContext, createLink, replyAccess } from "@/lib/whatsapp-operations";
 import { canUseWhatsApp } from "@/lib/whatsapp-schema";
 import { whatsappConfiguration } from "@/lib/whatsapp-provider";
 import { consumeRateLimit } from "@/lib/rate-limit";
@@ -20,7 +20,7 @@ export const GET = withDatabase(async (request) => {
   const linked = Boolean(link?.phone && actorForPhone(link.phone)?.id === user.id);
   const scope = replyAccess(user);
   return Response.json({ ready: config.ready, missing: user.role === "OWNER" ? config.missing : [], linked, phone: linked ? link?.phone : null, linkedAt: linked ? link?.linkedAt : null, chatUrl: config.businessNumber ? `https://wa.me/${config.businessNumber}` : null,
-    orders: getAccessibleServiceOrders(user).map(({ id, title }) => ({ id, title })),
+    orders: assistantContext(user).orders.map(({ id, title }) => ({ id, title })),
     messages: db.whatsappMessages.filter((entry) => entry.userId === user.id).slice(-20).reverse().map(({ id, text, transcript, status, reply, replyAccess: access, createdAt, error, replySentAt, replyDeliveryStatus, replyErrorCodes }) => ({ id, text: transcript || text, status, reply: access === scope ? reply : undefined, createdAt, error, replySentAt, replyDeliveryStatus, replyErrorCodes })),
   });
 });

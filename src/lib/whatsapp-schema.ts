@@ -2,7 +2,10 @@ import { z } from "zod";
 import type { SessionUser, UserRole } from "./types";
 
 export function canUseWhatsApp(role: UserRole) {
-  return ["OWNER", "GERENTE", "SUPERVISOR_OBRA", "FINANCEIRO"].includes(role);
+  return ["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO", "COMERCIAL", "TECNICO", "FINANCEIRO", "COLABORADOR"].includes(role);
+}
+export function canManageWhatsAppOperations(role: UserRole) {
+  return role === "OWNER" || role === "GERENTE" || role === "SUPERVISOR_OBRA";
 }
 export function canManageWhatsAppFinance(user: Pick<SessionUser, "role" | "canViewFinancials">) {
   return user.role === "OWNER" || user.role === "FINANCEIRO" || (user.role === "GERENTE" && user.canViewFinancials === true);

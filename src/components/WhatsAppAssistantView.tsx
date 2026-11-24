@@ -7,6 +7,7 @@ import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import type { SessionUser } from "@/lib/types";
+import { canManageWhatsAppOperations } from "@/lib/whatsapp-schema";
 
 type Connection = {
   ready: boolean; missing: string[]; linked: boolean; phone: string | null; linkedAt: string | null; chatUrl: string | null;
@@ -66,22 +67,24 @@ export function WhatsAppAssistantView({ user }: { user: SessionUser }) {
     <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}><Stack spacing={2}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} flexWrap="wrap"><Typography variant="h6">Seu WhatsApp, {user.name.split(" ")[0]}</Typography><Chip label={data?.linked ? "Vinculado" : data?.ready ? "Pronto para vincular" : "Aguardando ativação"} color={data?.linked ? "success" : "default"} /></Stack>
       {data && !data.ready && <Alert severity="info">A integração está aguardando configuração pelo administrador. Assim que for ativada, você poderá vincular sua conta e enviar mensagens.</Alert>}
-      <Typography color="text.secondary">Vincule seu número enviando a mensagem gerada pelo sistema. O assistente respeita as permissões da sua conta e as obras às quais você tem acesso.</Typography>
+      <Typography color="text.secondary">Vincule seu número enviando a mensagem gerada pelo sistema. O WhatsApp ficará associado somente à sua conta autenticada e às obras autorizadas para o seu perfil.</Typography>
       {data?.linked && <Typography>Conectado ao número +{data.phone}.</Typography>}
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
         {data?.linked && data.chatUrl ? <Button variant="contained" color="success" href={data.chatUrl} target="_blank" rel="noopener noreferrer" startIcon={<WhatsAppIcon />}>Conversar no WhatsApp</Button> : <Button variant="contained" color="success" disabled={busy || !data?.ready} onClick={() => void changeLink("POST")} startIcon={<WhatsAppIcon />}>{busy ? "Preparando vínculo…" : "Vincular meu WhatsApp"}</Button>}
         {data?.linked && <Button color="inherit" disabled={busy} onClick={() => void changeLink("DELETE")}>Desvincular</Button>}
         <Button startIcon={<RefreshRoundedIcon />} onClick={() => void refresh()} disabled={busy}>Atualizar</Button>
       </Stack>
-      {link && !data?.linked && <Alert severity="success"><Stack spacing={1}><Typography>Abra o WhatsApp e envie a mensagem preenchida para concluir o vínculo. O link vale até {new Date(link.expiresAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}.</Typography><Button variant="outlined" color="success" href={link.url} target="_blank" rel="noopener noreferrer">Abrir WhatsApp e enviar vínculo</Button></Stack></Alert>}
+      {link && !data?.linked && <Alert severity="info"><Stack spacing={1}><Typography>Envie a mensagem preparada pelo seu próprio WhatsApp para confirmar a posse do número. Ela vale até {new Date(link.expiresAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}.</Typography><Button variant="outlined" color="success" href={link.url} target="_blank" rel="noopener noreferrer">Abrir WhatsApp e enviar vínculo</Button><Typography variant="caption">O vínculo só será concluído quando a Meta entregar essa mensagem ao servidor. O número de teste pode ter restrições de recebimento e não substitui essa confirmação.</Typography></Stack></Alert>}
     </Stack></Paper>
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
       <Paper variant="outlined" sx={{ p: 3, borderRadius: 3 }}><Stack spacing={1.5}><Typography variant="h6">O que você pode pedir</Typography>
-        {user.role !== "FINANCEIRO" && <><Typography>“Na obra do João, crie um item para polir a sala e coloque o Carlos como responsável.”</Typography><Typography>“Registre no diário: hoje concluímos a preparação do piso, mas faltou material para o corredor.”</Typography><Typography>“Registre uma advertência para o Carlos, da obra do João, pelo atraso de hoje.”</Typography></>}
+        {canManageWhatsAppOperations(user.role) && <Typography>“Na obra do João, crie um item para polir a sala e coloque o Carlos como responsável.”</Typography>}
+        {user.role !== "FINANCEIRO" && <Typography>“Registre no diário: hoje concluímos a preparação do piso, mas faltou material para o corredor.”</Typography>}
+        {canManageWhatsAppOperations(user.role) && <Typography>“Registre uma advertência para o Carlos, da obra do João, pelo atraso de hoje.”</Typography>}
         {["OWNER", "GERENTE"].includes(user.role) && <Typography>“Transfira o Carlos da obra do João para a obra da Maria.”</Typography>}
         {(user.role === "FINANCEIRO" || user.role === "OWNER" || user.canViewFinancials) && <Typography>Envie o comprovante e diga: “Arquive na obra da Maria, referente à compra de material.” Para lançar uma despesa ou receber uma parcela, diga também o valor e a data.</Typography>}
         <Typography>“Gere um relatório da obra da Maria.”</Typography>
-        <Divider /><Typography variant="body2" color="text.secondary">Áudios são transcritos. O diário guarda o relato original e o resumo organizado. Atividades, advertências, transferências e lançamentos pedem confirmação. Advertências ficam como registros internos, sem envio automático ao colaborador.</Typography>
+        <Divider /><Typography variant="body2" color="text.secondary">Áudios são transcritos. O diário guarda o relato original e o resumo organizado. Ações permitidas ao seu cargo exigem confirmação. Advertências ficam como registros internos, sem envio automático ao colaborador.</Typography>
       </Stack></Paper>
       <Paper variant="outlined" sx={{ p: 3, borderRadius: 3 }}><Stack spacing={1.5}><Typography variant="h6">Histórico das obras</Typography><Typography color="text.secondary">Consulte relatos, comprovantes e relatórios de cada serviço.</Typography>
         {data?.orders.length === 0 && <Typography color="text.secondary">Nenhuma obra disponível para seu perfil.</Typography>}

@@ -5,7 +5,7 @@ import { runWithStore } from "./request-store";
 import { authorizeServiceOrderAccess } from "./service-order-access";
 import { addReceipt, expenseTotal, reconcileExpenseLedger } from "./finance-operations";
 import { assignChecklistItem, createChecklistItem, db, ensureDatabaseReady, getAccessibleServiceOrders, isEmployeeAssignedToServiceOrder, isOpenServiceOrderForTeam, recordAuditLog, recordChecklistEvent } from "./store";
-import { assistantIntentSchema, canManageWhatsAppFinance, canUseWhatsApp, type AssistantIntent } from "./whatsapp-schema";
+import { assistantIntentSchema, canManageWhatsAppFinance, canManageWhatsAppOperations, canUseWhatsApp, type AssistantIntent } from "./whatsapp-schema";
 import type { AssistantAttachment, AssistantCommand, WhatsAppDeliveryUpdate, WhatsAppMessage, WorkHistoryEntry } from "./whatsapp-types";
 import type { SessionUser } from "./types";
 
@@ -88,7 +88,10 @@ export function visibleHistory(user: SessionUser, orderId: string) {
 }
 export function assistantContext(user: SessionUser) {
   requireAssistantActor(user);
-  const orders = getAccessibleServiceOrders(user);
+  const orders = getAccessibleServiceOrders(user).filter((order) => {
+    try { authorizeServiceOrderAccess(user, order.id, "history"); return true; }
+    catch { return false; }
+  });
   const ids = new Set(orders.map((order) => order.id));
   return {
     role: user.role, canManageFinance: canManageWhatsAppFinance(user), today: new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }),
@@ -108,6 +111,9 @@ export function validateIntent(user: SessionUser, raw: AssistantIntent, attachme
   requireAssistantActor(user);
   const intent = assistantIntentSchema.parse(raw);
   if (intent.action === "CLARIFY") return intent;
+  if (["CREATE_CHECKLIST", "ASSIGN_CHECKLIST", "WARN_EMPLOYEE"].includes(intent.action) && !canManageWhatsAppOperations(user.role)) {
+    throw new AssistantError("Seu perfil pode relatar e consultar obras autorizadas, mas não pode criar tarefas, atribuir responsáveis ou aplicar advertências.");
+  }
   const order = activeOrder(user, intent.serviceOrderId);
   if (user.role === "FINANCEIRO" && !["FILE_RECEIPT", "REPORT"].includes(intent.action)) throw new AssistantError("Seu perfil financeiro pode arquivar comprovantes e consultar relatórios financeiros.");
   if (["CREATE_CHECKLIST", "ASSIGN_CHECKLIST", "TRANSFER_EMPLOYEE", "WARN_EMPLOYEE"].includes(intent.action) && !isOpenServiceOrderForTeam(order.status)) throw new AssistantError("Esta obra está encerrada. Escolha uma obra ativa.");

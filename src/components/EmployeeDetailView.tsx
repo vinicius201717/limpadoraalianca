@@ -16,6 +16,7 @@ import { labelFor } from "@/lib/labels";
 import { canEditEmployee, canEvaluateEmployeeProfileByRole, canManageEmployeeUserAccess, canViewServiceOrderFinancials } from "@/lib/permissions";
 import type { Employee, EmployeeStatus, Evaluation, ServiceOrder, ServiceOrderChecklistEvent, ServiceOrderChecklistItem, SupervisorEvaluation, UserRole } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
+import { WhatsAppProfileAccessCard, type WhatsAppProfileAccount } from "./WhatsAppProfileAccessCard";
 import { useCurrentUser } from "./useCurrentUser";
 
 const criteria = [
@@ -109,6 +110,7 @@ function average(values: number[]) {
 
 export function EmployeeDetailView({
   employee,
+  whatsappAccount,
   targetAccessRole,
   evaluations,
   supervisorEvaluations = [],
@@ -117,6 +119,7 @@ export function EmployeeDetailView({
   checklistItems = [],
 }: {
   employee: Employee;
+  whatsappAccount: WhatsAppProfileAccount;
   targetAccessRole?: UserRole | null;
   evaluations: Evaluation[];
   supervisorEvaluations?: SupervisorEvaluation[];
@@ -357,6 +360,8 @@ export function EmployeeDetailView({
           Voltar
         </Button>
       </Stack>
+
+      {user && <WhatsAppProfileAccessCard account={whatsappAccount} viewerUserId={user.id} />}
 
       {needsTraining && (
         <Alert severity="warning" icon={<SchoolRoundedIcon />}>
