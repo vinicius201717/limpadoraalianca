@@ -937,13 +937,13 @@ test("operational notices follow Sao Paulo work schedule, are isolated to assign
   const when=new Date("2026-12-02T15:05:00Z");
   await assistantTransaction(()=>{
     const notices=fieldNotices(supervisor,when);
-    assert.equal(notices.length,2);
+    assert.equal(notices.length,1);
     assert.ok(notices.every(n=>n.orderId==="a"));
     assert.ok(notices.some(n=>n.kind==="ORGANIZATION"));
     assert.equal(fieldNotices(supervisor,new Date("2026-11-30T15:05:00Z")).length,0);
-    assert.equal(fieldNotices(supervisor,new Date("2026-12-01T15:05:00Z")).length,2);
+    assert.equal(fieldNotices(supervisor,new Date("2026-12-01T15:05:00Z")).length,1);
     db.fieldNoticeReads.push({id:notices[0].id,userId:supervisor.id,at:when.toISOString()});
-    assert.equal(unreadFieldNotices(supervisor,when).filter(n=>!n.read).length,1);
+    assert.equal(unreadFieldNotices(supervisor,when).filter(n=>!n.read).length,0);
     db.serviceOrders.find(o=>o.id==="a")!.status="DONE";
     assert.equal(fieldNotices(supervisor,when).length,0);
     assert.equal(fieldNotices(collaborator,when).length,0);
@@ -996,9 +996,39 @@ test("supervisor receives only outstanding delivery validation alerts, not a red
       const base:import("../src/lib/types").ServiceOrderChecklistItem={id:"delivery",serviceOrderId:"a",title:"Vidros",description:"",sortOrder:1,status:"DONE" as const,isRequired:true,requiresPhoto:false,minimumPhotos:0,completedByUserId:collaborator.id,createdByUserId:owner.id,createdAt:now.toISOString(),updatedAt:now.toISOString(),completedAt:now.toISOString()};
       db.serviceOrderChecklistItems.push(base,{...base,id:"already-reviewed",validatedAt:now.toISOString(),validatedByUserId:supervisor.id},{...base,id:"supervisor-completed",completedByUserId:supervisor.id},{...base,id:"other-work",serviceOrderId:"b"});
       const notices=fieldNotices(supervisor,now);
-      assert.equal(notices.filter(n=>n.scheduled).length,2);
+      assert.equal(notices.filter(n=>n.scheduled).length,1);
       assert.equal(notices.filter(n=>n.title==="Serviço aguardando sua conferência").length,1);
       base.validatedAt=now.toISOString(); assert.equal(fieldNotices(supervisor,now).filter(n=>n.title==="Serviço aguardando sua conferência").length,0);
     });
   }finally{if(previous===undefined)delete process.env.FIELD_REMINDER_HOURS;else process.env.FIELD_REMINDER_HOURS=previous;}
+});
+
+
+test("progress reminders only appear after three hours without real checklist activity and disappear on update",async()=>{
+  const {fieldNotices}=await import("../src/lib/field-notifications");
+  const oldHours=process.env.FIELD_REMINDER_HOURS,oldStale=process.env.FIELD_PROGRESS_STALE_HOURS;
+  process.env.FIELD_REMINDER_HOURS="9,12,16";process.env.FIELD_PROGRESS_STALE_HOURS="3";
+  try{
+    await assistantTransaction(()=>{
+      const now=new Date("2026-12-02T15:05:00Z"); // 12:05 BRT
+      const item:import("../src/lib/types").ServiceOrderChecklistItem={id:"progress",serviceOrderId:"a",title:"Limpar vidro",description:"",sortOrder:1,status:"IN_PROGRESS",isRequired:true,requiresPhoto:false,minimumPhotos:0,createdByUserId:owner.id,createdAt:"2026-12-01T12:00:00Z",updatedAt:"2026-12-01T12:00:00Z"};
+      db.serviceOrderChecklistItems.push(item);
+      const progress=(at=now)=>fieldNotices(supervisor,at).filter(n=>n.kind==="PROGRESS");
+      assert.equal(progress(new Date("2026-12-02T12:05:00Z")).length,0);
+      assert.equal(progress().length,1);
+      const id=progress()[0].id;
+      assert.equal(progress(new Date("2026-12-02T16:00:00Z"))[0].id,id);
+      item.startedAt="2026-12-02T14:00:00Z";
+      assert.equal(progress().length,0);
+      assert.equal(progress(new Date("2026-12-02T17:05:00Z")).length,1);
+      db.serviceOrderChecklistEvents.push({id:"validated-event",checklistItemId:item.id,serviceOrderId:"a",userId:supervisor.id,type:"VALIDATED",createdAt:"2026-12-02T17:00:00Z"});
+      assert.equal(progress(new Date("2026-12-02T17:05:00Z")).length,0);
+      item.status="DONE";
+      assert.equal(progress(new Date("2026-12-02T19:50:00Z")).length,0);
+      item.status="PENDING";item.plannedStartAt="2026-12-03T12:00:00Z";
+      assert.equal(progress(new Date("2026-12-02T19:50:00Z")).length,0);
+      item.plannedStartAt=undefined;item.status="BLOCKED";
+      assert.equal(progress(new Date("2026-12-02T19:50:00Z")).length,0);
+    });
+  }finally{if(oldHours===undefined)delete process.env.FIELD_REMINDER_HOURS;else process.env.FIELD_REMINDER_HOURS=oldHours;if(oldStale===undefined)delete process.env.FIELD_PROGRESS_STALE_HOURS;else process.env.FIELD_PROGRESS_STALE_HOURS=oldStale;}
 });

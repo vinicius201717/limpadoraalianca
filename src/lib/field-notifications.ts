@@ -10,7 +10,6 @@ export type FieldPushSubscription = { id:string; userId:string; sessionVersion:n
 export type FieldPushDelivery = { id:string; subscriptionId:string; noticeId:string; state:"CLAIMED"|"SENT"|"FAILED"; at:string; attempts?:number };
 export type FieldNoticeRead = { id:string; userId:string; at:string };
 export const reminderSlots = [
-  { hour:9,kind:"PROGRESS",title:"Como está a obra?",body:"Relate as condições da obra, dificuldades, necessidades da equipe ou imprevistos que não estejam no checklist." },
   { hour:12,kind:"ORGANIZATION",title:"Hora de conferir os materiais",body:"Verifique se produtos, ferramentas e máquinas estão organizados e seguros na obra. Envie um relato." },
   { hour:16,kind:"CHECKLIST",title:"Conferência antes de encerrar",body:"Confira a organização, o recolhimento dos materiais e as condições de segurança antes de sair. Informe apenas ocorrências não registradas." },
 ] as const;
@@ -39,7 +38,22 @@ export function fieldNotices(user:SessionUser,now=new Date()):FieldNotice[] {
       const rawHours=(process.env.FIELD_REMINDER_HOURS||"9,12,16").split(",").map(x=>Number(x.trim()));
       // Preserve the old four-hour configuration, ignoring the retired progress reminder.
       const configured=rawHours.length===4?[rawHours[0],rawHours[1],rawHours[3]]:rawHours;
-      for(const slot of reminderSlots.map((s,i)=>({...s,hour:Number.isInteger(configured[i])&&configured[i]>=6&&configured[i]<=20?configured[i]:s.hour})).filter(s=>s.hour<=hour)){
+      const validHour=(value:number|undefined,fallback:number)=>Number.isInteger(value)&&value!>=6&&value!<=20?value!:fallback;
+      const monitorStart=validHour(configured[0],9);
+      const monitorEnd=validHour(configured[2],16);
+      const staleHours=Number(process.env.FIELD_PROGRESS_STALE_HOURS||"3");
+      const staleMs=(Number.isFinite(staleHours)&&staleHours>=1&&staleHours<=8?staleHours:3)*3600000;
+      const items=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===order.id);
+      const actionable=items.some(i=>["PENDING","IN_PROGRESS","REOPENED"].includes(i.status)&&(!i.plannedStartAt||Date.parse(i.plannedStartAt)<=now.getTime()));
+      // Only actual execution events count as progress; reading the checklist does not.
+      if(order.status==="IN_PROGRESS"&&actionable&&hour>=monitorStart&&hour<=monitorEnd){
+        const baseline=Date.parse(day+"T"+String(monitorStart).padStart(2,"0")+":00:00-03:00");
+        const timestamps=[baseline,...items.flatMap(i=>[i.startedAt,i.completedAt,i.validatedAt]),...db.serviceOrderChecklistEvents.filter(e=>e.serviceOrderId===order.id&&(["STARTED","COMPLETED","VALIDATED","REOPENED","BLOCKED","CANCELED"].includes(e.type)||(e.previousStatus&&e.newStatus&&e.previousStatus!==e.newStatus))).map(e=>e.createdAt)].map(x=>typeof x==="number"?x:Date.parse(x||"")).filter(t=>Number.isFinite(t)&&t<=now.getTime());
+        const last=Math.max(...timestamps);
+        const due=last+staleMs;
+        if(now.getTime()>=due)rows.push({id:noticeId(user.id,order.id,day,"stale-progress"),orderId:order.id,title:"Andamento sem atualização",body:order.title+" — O checklist tem tarefas em aberto e está sem atualização operacional recente. Confira o andamento e registre somente o que mudou ou o motivo do atraso.",kind:"PROGRESS",scheduled:true,createdAt:new Date(due).toISOString()});
+      }
+      for(const slot of reminderSlots.map((s,i)=>({...s,hour:validHour(configured[i+1],s.hour)})).filter(s=>s.hour<=hour)){
         rows.push({id:noticeId(user.id,order.id,day,String(slot.hour),slot.title),orderId:order.id,title:slot.title,body:order.title+" — "+slot.body,kind:slot.kind,scheduled:true,createdAt:day+"T"+String(slot.hour).padStart(2,"0")+":00:00-03:00"});
       }
       const awaiting=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===order.id&&i.status==="DONE"&&!i.validatedAt&&!i.validatedByUserId&&i.completedByUserId&&db.users.some(u=>u.id===i.completedByUserId&&u.role==="COLABORADOR"));

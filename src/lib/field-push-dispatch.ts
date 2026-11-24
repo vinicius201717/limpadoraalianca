@@ -7,7 +7,7 @@ import { fieldNotices, isAllowedPushEndpoint, noticeId, type FieldNotice } from 
 function pushBody(notices:FieldNotice[]){
   if(notices.length>1)return "Você tem "+notices.length+" avisos operacionais. Abra o aplicativo para conferir e responder.";
   switch(notices[0].kind){
-    case "PROGRESS":return "Envie uma atualização sobre o andamento da obra.";
+    case "PROGRESS":return "Há uma obra com andamento sem atualização recente. Confira apenas o que estiver faltando.";
     case "ORGANIZATION":return "Confira a organização dos materiais e ferramentas e envie um relato.";
     case "CHECKLIST":return "Confira o checklist e as tarefas pendentes.";
     case "BLOCKED":return "Existe uma tarefa que precisa de atenção. Confira no aplicativo.";
