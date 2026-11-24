@@ -18,13 +18,15 @@ process.env.WHATSAPP_GRAPH_VERSION = "v99.0";
 process.env.OPENAI_API_KEY = "test-only-openai-key";
 const { db, createChecklistItem } = await import("../src/lib/store");
 const { APP_STATE_ID } = await import("../src/lib/request-store");
-const { actorForPhone, assistantContext, assistantTransaction, confirmCommand, consumeLink, createLink, digest, enqueueWhatsAppMessages, proposeCommand, recordWhatsAppDelivery, saveDiary, validateIntent, visibleHistory } = await import("../src/lib/whatsapp-operations");
-const { parseWhatsAppDeliveryUpdates, parseWhatsAppMessages, verifyWhatsAppSignature, whatsappConfiguration } = await import("../src/lib/whatsapp-provider");
+const { actorForPhone, assistantContext, assistantTransaction, confirmCommand, consumeLink, createLink, digest, enqueueWhatsAppMessages, proposeCommand, saveDiary, validateIntent, visibleHistory } = await import("../src/lib/whatsapp-operations");
+const { parseWhatsAppMessages, verifyWhatsAppSignature, whatsappConfiguration } = await import("../src/lib/whatsapp-provider");
 const { drainWhatsAppQueue } = await import("../src/lib/whatsapp-worker");
 const { signSessionToken } = await import("../src/lib/session-token");
 const { whatsappProfileStatus } = await import("../src/lib/whatsapp-profile");
 const { canUseWhatsApp } = await import("../src/lib/whatsapp-schema");
 const { createWorkReport } = await import("../src/lib/work-reports");
+const { appendFieldEntry, fieldHistory, fieldOrders } = await import("../src/lib/field-assistant");
+const { verifyUploadTicket } = await import("../src/lib/field-storage");
 const owner: SystemUser = { id: "owner", name: "Dona", email: "owner@example.test", role: "OWNER", isActive: true, sessionVersion: 0, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
 const supervisor: SystemUser = { ...owner, id: "supervisor", name: "Supervisora", role: "SUPERVISOR_OBRA", email: "sup@example.test" };
 const finance: SystemUser = { ...owner, id: "finance", name: "Financeiro", role: "FINANCEIRO", email: "fin@example.test" };
@@ -236,63 +238,42 @@ test("signature protects exact bytes and webhook ignores other business numbers"
   const value = (number: string) => ({ field: "messages", value: { metadata: { phone_number_id: number }, messages: [{ id: number, from: phone, timestamp: "123", type: "text", text: { body: "Oi" } }] } });
   assert.equal(parseWhatsAppMessages({ object: "whatsapp_business_account", entry: [{ changes: [value("other"), value("12345")] }] }).length, 1);
 });
-test("invalid webhook signatures never touch storage", async () => {
-  const { POST } = await import("../src/app/api/whatsapp/webhook/route");
-  const response = await POST(new NextRequest("http://localhost:3000/api/whatsapp/webhook", { method: "POST", body: "{}", headers: { "x-hub-signature-256": "bad" } }));
-  assert.equal(response.status, 401); assert.equal(state().whatsappMessages, undefined);
+test("field assistant saves only to an authorized order and keeps each chunk idempotent", async () => {
+  await assistantTransaction(() => {
+    assert.deepEqual(fieldOrders(collaborator).map((order) => order.id), ["a"]);
+    assert.deepEqual(fieldOrders(owner).map((order) => order.id), ["a", "b"]);
+    assert.throws(() => appendFieldEntry({ user: collaborator, orderId: "b", nonce: "not-allowed-entry-1", title: "Teste", content: "Não deve salvar." }));
+    const input = { user: collaborator, orderId: "a", nonce: "field-nonce-000001", title: "Áudio transcrito", content: "Faltou material na sala.", transcript: "Faltou material na sala." };
+    const one = appendFieldEntry(input);
+    const same = appendFieldEntry(input);
+    assert.equal(one.id, same.id);
+    assert.equal(db.workHistory.length, 1);
+    assert.equal(db.workHistory[0].userId, collaborator.id);
+    assert.equal(db.workHistory[0].serviceOrderId, "a");
+    assert.equal(fieldHistory(collaborator, "a")[0].content, "Faltou material na sala.");
+    assert.throws(() => fieldHistory(collaborator, "b"));
+  });
 });
-
-function deliveryPayload(status: string, options: { id?: string; number?: string; trackingId?: string } = {}) {
-  return { object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: options.number ?? "12345" }, statuses: [{ id: options.id ?? "sent-1", status, timestamp: "1795315323", biz_opaque_callback_data: options.trackingId, errors: status === "failed" ? [{ code: 130497, message: "Provider detail must not be stored" }] : undefined }] } }] }] };
-}
-async function postDelivery(payload: unknown, validSignature = true) {
-  const { POST } = await import("../src/app/api/whatsapp/webhook/route");
-  const body = JSON.stringify(payload);
-  const signature = createHmac("sha256", process.env.WHATSAPP_APP_SECRET!).update(body).digest("hex");
-  return POST(new NextRequest("http://localhost:3000/api/whatsapp/webhook", { method: "POST", body, headers: { "x-hub-signature-256": validSignature ? `sha256=${signature}` : "sha256=bad" } }));
-}
-
-test("accepted replies persist failed delivery callbacks without repeating business changes", async () => {
-  nextIntent = intent({ action: "DIARY", employeeId: null });
-  await assistantTransaction(() => { consumeLink(phone, createLink(supervisor).token); enqueueWhatsAppMessages([incoming("delivery", "Diário")]); });
-  await drainWhatsAppQueue();
-  await assistantTransaction(() => { assert.equal(db.whatsappMessages[0].replyDeliveryStatus, "accepted"); assert.equal(db.whatsappMessages[0].replyMessageId, "sent-1"); });
-  assert.equal((await postDelivery(deliveryPayload("failed"), false)).status, 401);
-  assert.equal((await postDelivery(deliveryPayload("failed", { number: "other" }))).status, 200);
-  assert.equal((await postDelivery(deliveryPayload("failed", { id: "unrelated" }))).status, 200);
-  await assistantTransaction(() => assert.equal(db.whatsappMessages[0].replyDeliveryStatus, "accepted"));
-  assert.equal((await postDelivery(deliveryPayload("failed"))).status, 200);
-  assert.equal((await postDelivery(deliveryPayload("failed"))).status, 200);
-  await drainWhatsAppQueue();
-  await assistantTransaction(() => { assert.equal(db.whatsappMessages[0].replyDeliveryStatus, "failed"); assert.deepEqual(db.whatsappMessages[0].replyErrorCodes, [130497]); assert.equal(db.workHistory.length, 1); });
-  assert.equal(deliveries.length, 1); assert.equal(aiCalls, 1);
-  assert.ok(!JSON.stringify(state()).includes("Provider detail"));
-  const { GET } = await import("../src/app/api/whatsapp/connection/route");
-  const result = await (await GET(request("/api/whatsapp/connection", supervisor), undefined)).json();
-  assert.equal(result.messages[0].replyDeliveryStatus, "failed"); assert.deepEqual(result.messages[0].replyErrorCodes, [130497]);
-  assert.equal(result.messages[0].replyTrackingId, undefined);
+test("signed field upload tickets reject tampering and expiration", () => {
+  const claim = { path: "campo/11111111-1111-4111-8111-111111111111", userId: "worker-user", sessionVersion: 0, orderId: "a", mimeType: "image/jpeg", fileName: "teste.jpg", sizeBytes: 24, exp: Date.now() + 20000, type: "image" };
+  const data = Buffer.from(JSON.stringify(claim)).toString("base64url");
+  const signature = createHmac("sha256", process.env.JWT_SECRET!).update(data).digest("base64url");
+  assert.equal(verifyUploadTicket(`${data}.${signature}`).orderId, "a");
+  assert.throws(() => verifyUploadTicket(`${data}.${signature.slice(0, -1)}x`));
+  const expired = Buffer.from(JSON.stringify({ ...claim, exp: Date.now() - 1000 })).toString("base64url");
+  assert.throws(() => verifyUploadTicket(`${expired}.${createHmac("sha256", process.env.JWT_SECRET!).update(expired).digest("base64url")}`), /expirado/);
 });
-
-test("delivery callbacks arriving before send response persist and never regress on out-of-order events", async () => {
-  beforeDeliveryResponse = async (trackingId, messageId) => {
-    assert.match(trackingId, /^[a-f0-9-]{36}$/);
-    assert.equal((await postDelivery(deliveryPayload("read", { id: messageId, trackingId }))).status, 200);
-  };
-  await assistantTransaction(() => enqueueWhatsAppMessages([incoming("race", "Olá")]));
-  await drainWhatsAppQueue();
-  for (const status of ["sent", "failed", "delivered", "read"]) assert.equal((await postDelivery(deliveryPayload(status))).status, 200);
-  await assistantTransaction(() => { assert.equal(db.whatsappMessages[0].replyDeliveryStatus, "read"); assert.equal(db.whatsappMessages[0].replyMessageId, "sent-1"); assert.equal(db.whatsappMessages[0].replyErrorCodes, undefined); });
-  assert.equal(deliveries.length, 1);
-});
-
-test("delivery status persistence failure asks Meta to retry and unknown statuses are ignored", async () => {
-  assert.deepEqual(parseWhatsAppDeliveryUpdates(deliveryPayload("unknown-future-status")), []);
-  await assistantTransaction(() => enqueueWhatsAppMessages([incoming("status-write", "Olá")])); await drainWhatsAppQueue();
-  failWrite = true;
-  assert.equal((await postDelivery(deliveryPayload("delivered"))).status, 503);
-  failWrite = false;
-  await assistantTransaction(() => { assert.equal(db.whatsappMessages[0].replyDeliveryStatus, "accepted"); recordWhatsAppDelivery(parseWhatsAppDeliveryUpdates(deliveryPayload("delivered"))); });
-  await assistantTransaction(() => assert.equal(db.whatsappMessages[0].replyDeliveryStatus, "delivered"));
+test("WhatsApp transport has been retired and can never process incoming messages", async () => {
+  const before = JSON.stringify(state());
+  const webhook = await import("../src/app/api/whatsapp/webhook/route");
+  const process = await import("../src/app/api/whatsapp/process/route");
+  const connection = await import("../src/app/api/whatsapp/connection/route");
+  assert.equal((await webhook.GET()).status, 410);
+  assert.equal((await webhook.POST()).status, 410);
+  assert.equal((await process.POST()).status, 410);
+  assert.equal((await connection.GET()).status, 410);
+  assert.equal((await connection.POST()).status, 410);
+  assert.equal(JSON.stringify(state()), before);
 });
 test("database failure does not persist a business mutation or report success", async () => {
   failWrite = true;

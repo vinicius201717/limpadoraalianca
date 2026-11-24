@@ -47,8 +47,8 @@ import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 import SlideshowRoundedIcon from "@mui/icons-material/SlideshowRounded";
 import StarRoundedIcon from "@mui/icons-material/StarRounded";
 import SupervisorAccountRoundedIcon from "@mui/icons-material/SupervisorAccountRounded";
-import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import { canUseWhatsApp } from "@/lib/whatsapp-schema";
+import MicRoundedIcon from "@mui/icons-material/MicRounded";
+
 
 import { canViewServiceOrderFinancials } from "@/lib/permissions";
 import type { SessionUser } from "@/lib/types";
@@ -62,7 +62,7 @@ const fallbackShellUser = { role: "COLABORADOR", canViewFinancials: false } as c
 >;
 
 const menuItems = [
-  { label: "Assistente WhatsApp", href: "/assistente-whatsapp", icon: <WhatsAppIcon /> },
+  { label: "Assistente de Campo", href: "/campo", icon: <MicRoundedIcon /> },
   { label: "Dashboard", href: "/dashboard", icon: <DashboardRoundedIcon /> },
   { label: "Apresentacao", href: "/apresentacao", icon: <SlideshowRoundedIcon /> },
   { label: "Usuarios", href: "/usuarios", icon: <SupervisorAccountRoundedIcon /> },
@@ -88,7 +88,7 @@ const menuItems = [
 
 function canSeeMenuItem(href: string, user: Pick<SessionUser, "role" | "canViewFinancials">, hasAssignedServiceOrders = false) {
   const role = user.role;
-  if (href === "/assistente-whatsapp") return canUseWhatsApp(role);
+  if (href === "/campo") return true;
   if (href === "/feedback-empresa") return true;
   if (role === "ALMOXARIFADO") {
     if (href === "/ordens-servico") return hasAssignedServiceOrders;
@@ -200,6 +200,8 @@ function Sidebar({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const publicPaths = ["/", "/login", "/acompanhe-servico", "/politica-de-privacidade", "/exclusao-de-dados"];
+
+  if (pathname === "/campo") return <>{children}</>;
 
   if (publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
     return <>{children}</>;
@@ -337,7 +339,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
               }}
             />
 
-            {user && canUseWhatsApp(user.role) && <Tooltip title="Assistente WhatsApp"><IconButton component={Link} href="/assistente-whatsapp" aria-label="Abrir assistente WhatsApp" sx={{ color: "success.main" }}><WhatsAppIcon /></IconButton></Tooltip>}
+            {user && <Tooltip title="Assistente de Campo"><IconButton component={Link} href="/campo" aria-label="Abrir Assistente de Campo" sx={{ color: "success.main" }}><MicRoundedIcon /></IconButton></Tooltip>}
             <Tooltip title={mode === "light" ? "Tema escuro" : "Tema claro"}>
               <IconButton aria-label="Alternar tema" onClick={toggleColorMode}>
                 {mode === "light" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}

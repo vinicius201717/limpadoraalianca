@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Política de Privacidade | Aliança Limpeza e Restauração",
-  description: "Informações sobre o tratamento de dados no sistema de gestão e no Assistente WhatsApp da Aliança.",
+  description: "Informações sobre o tratamento de dados no sistema de gestão e no Assistente de Campo da Aliança.",
 };
 
 const contactUrl = "https://wa.me/5562991434343?text=" + encodeURIComponent("Olá, quero falar com a Aliança sobre privacidade e meus dados pessoais.");
@@ -17,12 +17,12 @@ export default function PrivacyPolicyPage() {
         <Link href="/" style={{ color: "#0d6b83", fontWeight: 700 }}>Aliança Limpeza e Restauração</Link>
         <h1 style={{ marginBottom: 8, lineHeight: 1.15 }}>Política de Privacidade</h1>
         <p style={{ color: "#496079" }}>Última atualização: 24 de novembro de 2026</p>
-        <p>A Aliança Limpeza e Restauração, localizada na Avenida Bela Vista, 957, Jardim Bela Vista, Goiânia/GO, disponibiliza um site e um sistema de gestão operacional, incluindo a funcionalidade Assistente WhatsApp. Esta política descreve como essas ferramentas tratam dados pessoais e como solicitar informações, correções ou exclusão.</p>
+        <p>A Aliança Limpeza e Restauração, localizada na Avenida Bela Vista, 957, Jardim Bela Vista, Goiânia/GO, disponibiliza um site e um sistema de gestão operacional, incluindo a funcionalidade Assistente de Campo. Esta política descreve como essas ferramentas tratam dados pessoais e como solicitar informações, correções ou exclusão.</p>
 
         <section style={sectionStyle}>
           <h2>1. Dados que podem ser tratados</h2>
           <p>Conforme a funcionalidade utilizada, o sistema pode tratar dados de identificação e contato de clientes, funcionários e prestadores de serviços; informações de obras e atendimentos; atribuições de trabalho, registros de checklist e históricos operacionais; fotos e documentos fornecidos; e dados técnicos de acesso e auditoria.</p>
-          <p>Para usuários autorizados do Assistente WhatsApp, são tratados o número de telefone vinculado ao perfil, as mensagens enviadas, eventuais áudios, suas transcrições e anexos necessários ao atendimento da solicitação.</p>
+          <p>Para usuários do Assistente de Campo, são tratados relatos escritos, áudio e transcrições, fotos, vídeos, descrições geradas com apoio de inteligência artificial, vínculo com a obra e autoria do registro. Esses conteúdos não dependem de WhatsApp.</p>
         </section>
 
         <section style={sectionStyle}>
@@ -31,9 +31,9 @@ export default function PrivacyPolicyPage() {
         </section>
 
         <section style={sectionStyle}>
-          <h2>3. WhatsApp e inteligência artificial</h2>
-          <p>O Assistente WhatsApp é uma ferramenta restrita a perfis autorizados. A vinculação exige uma conta ativa no sistema e a confirmação por mensagem enviada pelo próprio número. O número remetente é associado à conta confirmada e suas permissões. Mensagens, áudios e documentos podem ser processados para transcrição, interpretação e execução de tarefas autorizadas.</p>
-          <p>Para essa operação, conforme o recurso utilizado, pode haver processamento por prestadores de infraestrutura e tecnologia, incluindo Meta (WhatsApp Business Platform), OpenAI (serviços de inteligência artificial), Vercel (hospedagem) e Supabase (armazenamento e banco de dados). Esse processamento é limitado às finalidades do sistema e às configurações dos respectivos serviços.</p>
+          <h2>3. Assistente de Campo e inteligência artificial</h2>
+          <p>O Assistente de Campo exige autenticação no sistema e respeito às permissões da obra e do perfil. Os relatos são associados à conta autenticada, à obra selecionada e à data de registro. Áudios podem ser transcritos e fotos ou quadros de vídeo podem receber descrições automáticas. Relatórios são gerados a partir de históricos autorizados, com possibilidade de imprecisões que devem ser conferidas.</p>
+          <p>Para essa operação, conforme o recurso utilizado, pode haver processamento por prestadores de infraestrutura e tecnologia, incluindo OpenAI (serviços de inteligência artificial), Vercel (hospedagem) e Supabase (armazenamento e banco de dados). Esse processamento é limitado às finalidades do sistema e às configurações dos respectivos serviços.</p>
         </section>
 
         <section style={sectionStyle}>
@@ -49,7 +49,7 @@ export default function PrivacyPolicyPage() {
         <section style={sectionStyle}>
           <h2>6. Direitos dos titulares e solicitação de exclusão</h2>
           <p>Você pode solicitar informações sobre o tratamento de seus dados, acesso, correção, atualização ou exclusão, quando aplicável, nos termos da legislação brasileira de proteção de dados. Informe sua relação com a Aliança e quais informações deseja revisar. A empresa poderá solicitar comprovação de identidade antes de atender pedidos que envolvam dados pessoais.</p>
-          <p>A exclusão de uma vinculação do Assistente WhatsApp pode ser solicitada ao administrador e, para usuários habilitados, realizada nas configurações do próprio assistente. A remoção de um vínculo não significa necessariamente a exclusão dos históricos operacionais associados a obrigações ou à execução de serviços.</p>
+          <p>A revisão ou exclusão de registros do Assistente de Campo pode ser solicitada à administração. Alguns históricos operacionais poderão ser conservados quando necessários para execução de serviços ou obrigações aplicáveis. Vínculos antigos de uma integração anteriormente testada também podem ser objeto de solicitação.</p>
           <p><Link href="/exclusao-de-dados" style={{ color: "#007da3", fontWeight: 700 }}>Ver instruções detalhadas para solicitar exclusão de dados</Link>.</p>
         </section>
 

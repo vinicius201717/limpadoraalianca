@@ -1,7 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { assistantModel, generateWorkReport } from "./whatsapp-ai";
-import { AssistantError, assistantTransaction, requireAssistantActor, visibleHistory } from "./whatsapp-operations";
+import { AssistantError, assistantTransaction } from "./whatsapp-operations";
+import { fieldActor, fieldHistory } from "./field-assistant";
 import { canManageWhatsAppFinance } from "./whatsapp-schema";
 import { authorizeServiceOrderAccess } from "./service-order-access";
 import { db, recordAuditLog } from "./store";
@@ -10,9 +11,9 @@ import type { SessionUser } from "./types";
 export const reportScope = (user: SessionUser) => `${user.role}:${canManageWhatsAppFinance(user) ? "finance" : "operational"}`;
 export async function createWorkReport(userId: string, orderId: string) {
   const snapshot = await assistantTransaction(() => {
-    const user = db.users.find((entry) => entry.id === userId); requireAssistantActor(user);
+    const user = db.users.find((entry) => entry.id === userId); fieldActor(user);
     const order = authorizeServiceOrderAccess(user, orderId, "history").order;
-    const allHistory = visibleHistory(user, orderId);
+    const allHistory = fieldHistory(user, orderId);
     const entries = allHistory.slice(-300).map(({ id, authorName, kind, title, content, createdAt }) => ({ id, authorName, kind, title, content, createdAt }));
     const checklist = user.role === "FINANCEIRO" ? [] : db.serviceOrderChecklistItems.filter((item) => item.serviceOrderId === orderId).map(({ id, title, status, completionNotes }) => ({ id, title, status, completionNotes }));
     const financial = canManageWhatsAppFinance(user) ? { revenue: order.revenue, expenses: order.expenses, documents: db.financialDocuments.filter((item) => item.serviceOrderId === orderId).slice(-100).map(({ id, description, direction, amount, createdAt }) => ({ id, description, direction, amount, createdAt })) } : undefined;
@@ -20,7 +21,7 @@ export async function createWorkReport(userId: string, orderId: string) {
   });
   const content = await generateWorkReport(snapshot.input);
   return assistantTransaction(() => {
-    const user = db.users.find((entry) => entry.id === userId); requireAssistantActor(user);
+    const user = db.users.find((entry) => entry.id === userId); fieldActor(user);
     authorizeServiceOrderAccess(user, orderId, "history");
     if (reportScope(user) !== snapshot.scope || (user.sessionVersion ?? 0) !== snapshot.sessionVersion) throw new AssistantError("Suas permissões mudaram. Gere o relatório novamente.");
     const report = { id: randomUUID(), serviceOrderId: orderId, userId, content, sourceIds: snapshot.sourceIds, scope: snapshot.scope, createdAt: new Date().toISOString(), model: assistantModel() };

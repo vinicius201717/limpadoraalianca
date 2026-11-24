@@ -16,7 +16,7 @@ import { labelFor } from "@/lib/labels";
 import { canEditEmployee, canEvaluateEmployeeProfileByRole, canManageEmployeeUserAccess, canViewServiceOrderFinancials } from "@/lib/permissions";
 import type { Employee, EmployeeStatus, Evaluation, ServiceOrder, ServiceOrderChecklistEvent, ServiceOrderChecklistItem, SupervisorEvaluation, UserRole } from "@/lib/types";
 import { StatusChip } from "./StatusChip";
-import { WhatsAppProfileAccessCard, type WhatsAppProfileAccount } from "./WhatsAppProfileAccessCard";
+import { FieldProfileAccessCard, type FieldProfileAccount } from "./FieldProfileAccessCard";
 import { useCurrentUser } from "./useCurrentUser";
 
 const criteria = [
@@ -110,7 +110,7 @@ function average(values: number[]) {
 
 export function EmployeeDetailView({
   employee,
-  whatsappAccount,
+  fieldAccount,
   targetAccessRole,
   evaluations,
   supervisorEvaluations = [],
@@ -119,7 +119,7 @@ export function EmployeeDetailView({
   checklistItems = [],
 }: {
   employee: Employee;
-  whatsappAccount?: WhatsAppProfileAccount;
+  fieldAccount?: FieldProfileAccount;
   targetAccessRole?: UserRole | null;
   evaluations: Evaluation[];
   supervisorEvaluations?: SupervisorEvaluation[];
@@ -361,7 +361,7 @@ export function EmployeeDetailView({
         </Button>
       </Stack>
 
-      {user && whatsappAccount && <WhatsAppProfileAccessCard account={whatsappAccount} viewerUserId={user.id} />}
+      {user && fieldAccount && <FieldProfileAccessCard account={fieldAccount} viewerUserId={user.id} />}
 
       {needsTraining && (
         <Alert severity="warning" icon={<SchoolRoundedIcon />}>
