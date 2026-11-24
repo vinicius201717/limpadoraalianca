@@ -93,6 +93,7 @@ const initialDb = {
   financialDocuments: [] as import("./whatsapp-types").FinancialDocument[],
   workReports: [] as import("./whatsapp-types").WorkReport[],
   managementAnalyses: [] as import("./management-report-query").SavedManagementAnalysis[],
+  managementAnalysisRuns: [] as import("./management-report-query").ManagementAnalysisRun[],
   users: [] as SystemUser[],
   servicePayments: [] as ServicePayment[],
   warranties: [] as import("./types").Warranty[],

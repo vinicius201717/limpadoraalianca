@@ -699,7 +699,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
         <MenuItem onClick={() => { setAttachmentAnchor(null); videoInput.current?.click(); }}><VideocamRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Vídeo da obra</MenuItem>
         <MenuItem onClick={() => { setAttachmentAnchor(null); receiptCameraInput.current?.click(); }}><CameraAltRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Fotografar comprovante</MenuItem>
         <MenuItem onClick={() => { setAttachmentAnchor(null); receiptFileInput.current?.click(); }}><ReceiptLongRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Enviar comprovante / PDF</MenuItem>
-        {["OWNER","GERENTE"].includes(data.user.role) && orderId !== "office" && orderId !== "warehouse" && <MenuItem onClick={() => { setAttachmentAnchor(null); void generateReport(); }}><AutoAwesomeRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Gerar relatório da obra</MenuItem>}
+        {["OWNER","GERENTE"].includes(data.user.role) && orderId !== "office" && orderId !== "warehouse" && <MenuItem onClick={() => { setAttachmentAnchor(null); void generateReport(); }}><AutoAwesomeRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Gerar resumo da obra</MenuItem>}
       </Menu>
       <input ref={cameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden
         onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file, "image"); }} />

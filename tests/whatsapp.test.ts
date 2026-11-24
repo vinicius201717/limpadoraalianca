@@ -316,13 +316,13 @@ test("delivery failure retries only the reply, not the committed business action
   failDelivery = false; await assistantTransaction(() => { delete db.whatsappMessages[0].retryAt; }); await drainWhatsAppQueue();
   await assistantTransaction(() => { assert.equal(db.workHistory.length, 1); assert.ok(db.whatsappMessages[0].replySentAt); }); assert.equal(aiCalls, 1); assert.equal(deliveries.length, 1);
 });
-test("report prompt contains only accessible history and saves source references", async () => {
+test("legacy work report keeps source references without sending free text to AI", async () => {
   await assistantTransaction(() => {
     saveDiary(supervisor, intent({ action: "DIARY", details: "Piso preparado" }), "diary", "Original");
     const command = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE", details: "SEGREDO_FINANCEIRO" }), "receipt", "Confidencial", receipt); confirmCommand(owner, phone, command.code);
   });
-  reportMode = true; const report = await createWorkReport(manager.id, "a");
-  assert.ok(report.sourceIds.length >= 2); assert.ok(!prompts[0].includes("SEGREDO_FINANCEIRO")); assert.ok(!prompts[0].includes('"revenue"'));
+  const report = await createWorkReport(manager.id, "a");
+  assert.ok(report.sourceIds.length >= 2); assert.ok(!report.content.includes("SEGREDO_FINANCEIRO"));assert.equal(aiCalls,0);assert.equal(report.model,"structured-v2");
   await assert.rejects(createWorkReport(supervisor.id, "b"));
 });
 test("private financial attachment cannot be downloaded by supervisor", async () => {
@@ -1191,7 +1191,7 @@ test("management analysis uses verified source references, saves private history
  const person=(slug:string)=>scenario.users.find(u=>u.id==="teste-"+slug)! as SystemUser;
  const boss=person("owner"), gerente={...person("gerente"),canViewFinancials:false}, ana=person("supervisor");
  const query={kind:"services" as const,period:"all" as const,subject:"Aurora"};
- const post=(user:SystemUser)=>new NextRequest("http://localhost:3000/api/relatorios/gerenciais/analise",{method:"POST",headers:{cookie:"floor_session="+signSessionToken(user),"Content-Type":"application/json"},body:JSON.stringify(query)});
+ const post=(user:SystemUser,requestId?:string)=>new NextRequest("http://localhost:3000/api/relatorios/gerenciais/analise",{method:"POST",headers:{cookie:"floor_session="+signSessionToken(user),"Content-Type":"application/json"},body:JSON.stringify({...query,requestId})});
  let operationalBefore="";
  await assistantTransaction(()=>{
   db.users.find(u=>u.id===gerente.id)!.canViewFinancials=false;
@@ -1203,7 +1203,7 @@ test("management analysis uses verified source references, saves private history
   assert.ok(!restricted.sections.some(s=>s.key==="payments"));
   assert.ok(!JSON.stringify(restricted).includes("SEGREDO_FINANCEIRO"));
   const prepared=prepareManagementAnalysis(boss,query);
-  assert.ok(prepared.sources.some(s=>s.id==="diary:test-diary-ai"));
+  assert.ok(prepared.sources.some(s=>s.id==="section:diary"));assert.ok(!JSON.stringify(prepared.sources).includes("SEGREDO_FINANCEIRO"));
   assert.ok(prepared.sources.some(s=>s.id==="metric:0"));
   assert.ok(prepared.coverage.every(c=>c.total>=c.included));
   operationalBefore=JSON.stringify({orders:db.serviceOrders,items:db.serviceOrderChecklistItems,materials:db.materials,payments:db.servicePayments});
@@ -1213,20 +1213,114 @@ test("management analysis uses verified source references, saves private history
  assert.equal(aiCalls,0);
  const detailResponse=await details(request("/api/relatorios/gerenciais/dados?kind=services&period=all&subject=Aurora&section=checklist",boss),undefined);
  assert.equal(detailResponse.status,200);const detail=await detailResponse.json();assert.ok(detail.section.total>0);assert.ok(detail.section.rows.every((r:{fields:Record<string,unknown>})=>r.fields["Obra"]==="[TESTE] Jardim Aurora"));
- const sample={executiveSummary:"Análise de ensaio.",findings:[{title:"Obra no período",severity:"INFO",analysis:"O indicador registra obras.",evidence:["metric:0"]}],recommendations:[{action:"Conferir registros.",priority:"MEDIUM",responsibleRole:"Gerência",suggestedDeadline:"Próxima revisão",evidence:["section:checklist"]}],dataGaps:["Revisar dados disponíveis."],conclusion:"Conferir evidências."};
+ const sample={selectedIds:[]};
  nextIntent=sample as unknown as AssistantIntent;
- const generated=await POST(post(boss),undefined);assert.equal(generated.status,201,await generated.clone().text());
- const saved=(await generated.json()).analysis;assert.equal(saved.evidence.length,2);assert.equal(saved.analysis.findings[0].evidence[0],"metric:0");assert.ok(saved.coverage.length>5);
+ const requestId="09498eb1-4f79-49b1-bf68-d36ab394b6df";const generated=await POST(post(boss,requestId),undefined);assert.equal(generated.status,201,await generated.clone().text());
+ const saved=(await generated.json()).analysis;assert.ok(saved.evidence.length>2);assert.ok(saved.analysis.findings.every((f:{evidence:string[]})=>f.evidence.every(id=>saved.evidence.some((e:{id:string})=>e.id===id))));assert.equal(saved.method,"structured-v2");const calls=aiCalls;assert.equal((await (await POST(post(boss,requestId),undefined)).json()).analysis.id,saved.id);assert.equal(aiCalls,calls);assert.ok(saved.coverage.length>5);
  const hist="/api/relatorios/gerenciais/analise?kind=services&period=all&subject=Aurora";
  assert.equal((await (await GET(request(hist,boss),undefined)).json()).analyses.length,1);
  assert.equal((await (await GET(request(hist,gerente),undefined)).json()).analyses.length,0);
  assert.equal((await GET(request(hist,ana),undefined)).status,403);
- nextIntent={...sample,findings:[{...sample.findings[0],evidence:["fabricated:source"]}]} as unknown as AssistantIntent;
- assert.equal((await POST(post(boss),undefined)).status,422);
+ nextIntent={selectedIds:["fabricated:source"]} as unknown as AssistantIntent;
+ assert.equal((await POST(post(boss),undefined)).status,422);nextIntent={selectedIds:[],executiveSummary:"Fraude comprovada e prejuízo inventado"} as unknown as AssistantIntent;assert.ok([422,503].includes((await POST(post(boss),undefined)).status));
  await assistantTransaction(()=>{assert.equal(db.managementAnalyses.length,1);assert.equal(JSON.stringify({orders:db.serviceOrders,items:db.serviceOrderChecklistItems,materials:db.materials,payments:db.servicePayments}),operationalBefore);});
 });
 test("explicit AI report command selects analysis mode without consuming interpretation credits",async()=>{
  const {parseManagementReportRequest}=await import("../src/lib/management-report-query");
  assert.deepEqual(parseManagementReportRequest("Gere um relatório com IA dos supervisores dos últimos 7 dias"),{kind:"supervisors",period:"7",subject:"",mode:"ai"});
  await runWithStore(async()=>{await ensureDatabaseReady();const result=await processFieldStatement({user:owner,orderId:"office",nonce:"analysis-voice-request-01",text:"Gere relatório de materiais com IA"});assert.equal(result.operation.ui?.kind,"MANAGEMENT_REPORT");assert.equal(JSON.parse(result.operation.ui!.value).mode,"ai");assert.equal(aiCalls,0);return Response.json({ok:true});});
+});
+
+
+test("report audit regression: dates, current overdue backlog, cash movements, canceled items and future planning",async()=>{
+ const {audioTestData}=await import("../scripts/audio-test-data.mjs");
+ const {buildManagementReport}=await import("../src/lib/management-reports");
+ const {managementDetails}=await import("../src/lib/management-report-detail");
+ const {reportQuerySchema}=await import("../src/lib/management-report-query");
+ const scenario=await audioTestData();rows.set(APP_STATE_ID,{data:scenario,updated_at:new Date().toISOString()});
+ const boss=scenario.users.find(u=>u.id==="teste-owner")! as SystemUser;
+ const now=new Date("2026-11-24T15:00:00Z"),today="2026-11-24",a="teste-os-aurora",b="teste-os-horizonte";
+ const query={kind:"services" as const,period:"today" as const,subject:""};
+ await assistantTransaction(()=>{
+  const old=db.serviceOrders.find(o=>o.id===a)!;old.scheduledStart="2026-10-01";old.scheduledEnd="2026-10-02";old.status="IN_PROGRESS";
+  const future=db.serviceOrders.find(o=>o.id===b)!;future.scheduledStart="2026-11-25";future.scheduledEnd="2026-11-26";future.status="SCHEDULED";
+  const p=db.servicePayments.find(p=>p.serviceOrderId===a)!;
+  p.receipts=[{id:"audit-today-pay",amount:150,paidAt:today,method:"PIX",reference:"fixture",createdAt:now.toISOString(),createdByUserId:boss.id,reversedAt:now.toISOString(),reversedByUserId:boss.id}];
+  let report=buildManagementReport(boss,query,now);assert.ok(report.rows.some(r=>r.id===a));assert.ok(Number(report.metrics.find(m=>m.label==="Atrasadas hoje")!.value)>=1);
+  old.status="DELIVERED";
+  const details=managementDetails(boss,{...query,subject:"Aurora"},now);
+  assert.ok(details.sections.find(s=>s.key==="receipts")!.rows.some(r=>r.id==="audit-today-pay"));
+  assert.match(details.report.metrics.find(m=>m.label==="Recebimentos brutos no período")!.value,/150,00/);
+  assert.match(details.report.metrics.find(m=>m.label==="Estornos no período")!.value,/150,00/);
+  assert.ok(buildManagementReport(boss,{...query,period:"all"},now).rows.some(r=>r.id===b));
+  old.status="CANCELED";report=buildManagementReport(boss,{...query,subject:"Aurora"},now);
+  assert.equal(report.metrics.find(m=>m.label==="Itens em aberto")!.value,"0");
+  assert.equal(report.metrics.find(m=>m.label==="Itens validados")!.value,"0");
+  const custom=reportQuerySchema.parse({kind:"services",period:"custom",from:today,to:today,subject:"Aurora"});
+  assert.ok(buildManagementReport(boss,custom,now).rows.some(r=>r.id===a));
+  assert.equal(reportQuerySchema.safeParse({...custom,from:"2026-02-30"}).success,false);
+  assert.equal(reportQuerySchema.safeParse({...custom,from:"2026-11-25"}).success,false);
+ });
+});
+
+test("report audit regression: historical completion, manager authorship, privacy and complete structured scan",async()=>{
+ const {audioTestData}=await import("../scripts/audio-test-data.mjs");
+ const {buildManagementReport}=await import("../src/lib/management-reports");
+ const {managementDetails}=await import("../src/lib/management-report-detail");
+ const {prepareManagementAnalysis}=await import("../src/lib/management-report-ai");
+ const {parseManagementReportRequest}=await import("../src/lib/management-report-query");
+ const scenario=await audioTestData();rows.set(APP_STATE_ID,{data:scenario,updated_at:new Date().toISOString()});
+ const boss=scenario.users.find(u=>u.id==="teste-owner")! as SystemUser;
+ const gerente={...scenario.users.find(u=>u.id==="teste-gerente")!,canViewFinancials:false} as SystemUser;
+ const a="teste-os-aurora",today=new Date().toLocaleDateString("en-CA",{timeZone:"America/Sao_Paulo"}),now=new Date();
+ const q={kind:"services" as const,period:"all" as const,subject:"Aurora"};
+ await assistantTransaction(()=>{
+  const p=db.serviceOrderChecklistItems.find(i=>i.serviceOrderId===a)!;
+  p.title="Custo confidencial R$ 98765,43";p.status="REOPENED";
+  const at=new Date(now.getTime()-3600000).toISOString();
+  db.serviceOrderChecklistEvents.push({id:"audit-completed",checklistItemId:p.id,serviceOrderId:a,userId:boss.id,employeeId:"teste-emp-carlos",type:"COMPLETED",createdAt:at,metadataJson:{completedByEmployeeIds:["teste-emp-carlos","teste-emp-juliana"]}},{id:"audit-reopened",checklistItemId:p.id,serviceOrderId:a,userId:boss.id,type:"REOPENED",createdAt:now.toISOString()});
+  const employee=buildManagementReport(boss,{kind:"employees",period:"all",subject:"Carlos"},now);
+  assert.ok(Number(employee.rows[0].cells[employee.columns.indexOf("Conclusões no período")])>=1);
+  assert.ok(!JSON.stringify(managementDetails(gerente,q,now).sections).includes("98765,43"));
+  const payment=db.servicePayments.find(x=>x.serviceOrderId===a)!;
+  payment.createdByUserId=boss.id;
+  payment.receipts=[{id:"audit-manager-receipt",amount:50,paidAt:today,method:"PIX",reference:"fixture",createdAt:now.toISOString(),createdByUserId:gerente.id},{id:"audit-other-receipt",amount:75,paidAt:today,method:"PIX",reference:"fixture",createdAt:now.toISOString(),createdByUserId:boss.id}];
+  const mgr=managementDetails(boss,{kind:"managers",period:"all",subject:"Marcos"},now);
+  assert.ok(mgr.sections.find(s=>s.key==="receipts")!.rows.some(r=>r.id==="audit-manager-receipt"));
+  assert.ok(!mgr.sections.find(s=>s.key==="receipts")!.rows.some(r=>r.id==="audit-other-receipt"));
+  db.workHistory.push({id:"audit-privacy",serviceOrderId:a,userId:boss.id,authorName:"Diretor",kind:"DIARY",title:"Relato",content:"Contato 62 99999-1234, chave PIX ficticia 1234-5678, senha FICTICIA123",transcript:"Relato.",messageId:"audit-fixture",createdAt:now.toISOString()});
+  const detail=managementDetails(boss,q,now);
+  assert.ok(!JSON.stringify(detail.sections).includes("FICTICIA123"));assert.ok(!JSON.stringify(detail.sections).includes("99999-1234"));
+  for(let i=0;i<400;i++)db.workHistory.push({id:"audit-bulk-"+i,serviceOrderId:a,userId:boss.id,authorName:"Diretor",kind:"DIARY",title:"Relato",content:"PRIVATE_TEST_".repeat(150),transcript:"PRIVATE_TEST_",messageId:"audit-bulk-"+i,createdAt:now.toISOString()});
+  const prepared=prepareManagementAnalysis(boss,q);
+  const c=prepared.coverage.find(x=>x.section.includes("transcrições"))!;
+  assert.equal(c.total,401);assert.equal(c.included,401);
+  assert.ok(!JSON.stringify(prepared).includes("PRIVATE_TEST_"));
+  const paged=managementDetails(boss,q,now,"checklist");assert.deepEqual(paged.sections.map(s=>s.key),["checklist"]);
+  const general=managementDetails(boss,{kind:"general",period:"all",subject:""},now);
+  assert.ok(general.report.metrics.some(m=>m.label.startsWith("Materiais")));assert.ok(general.sections.some(s=>s.key==="company-admin-expenses"));
+  assert.ok(general.sections.every(s=>new Set(s.rows.map(r=>r.id)).size===s.rows.length));
+ });
+ assert.equal(parseManagementReportRequest("Relatório desta obra"),undefined);
+ assert.equal(parseManagementReportRequest("Relatório da supervisora Ana")?.kind,"supervisors");
+ assert.equal(parseManagementReportRequest("Relatório geral com IA")?.kind,"general");
+});
+
+test("report formal review: author verification, independent approval and permission checks",async()=>{
+ const {audioTestData}=await import("../scripts/audio-test-data.mjs");
+ const {POST,PATCH,GET}=await import("../src/app/api/relatorios/gerenciais/analise/route");
+ const scenario=await audioTestData();rows.set(APP_STATE_ID,{data:scenario,updated_at:new Date().toISOString()});
+ const person=(slug:string)=>scenario.users.find(u=>u.id==="teste-"+slug)! as SystemUser;
+ const boss=person("owner"),mgr=person("gerente"),ana=person("supervisor");
+ const url="http://localhost:3000/api/relatorios/gerenciais/analise";
+ const req=(user:SystemUser,method:string,body:unknown)=>new NextRequest(url,{method,headers:{cookie:"floor_session="+signSessionToken(user),"Content-Type":"application/json"},body:JSON.stringify(body)});
+ nextIntent={selectedIds:[]} as unknown as AssistantIntent;
+ const generated=await POST(req(mgr,"POST",{kind:"services",period:"all",subject:"Aurora",requestId:"7e138b1b-493d-4acd-9baa-370212394aa1"}),undefined);assert.equal(generated.status,201,await generated.clone().text());
+ const saved=(await generated.json()).analysis;
+ const review=(user:SystemUser,decision:string)=>PATCH(req(user,"PATCH",{id:saved.id,decision,note:"Conferência de teste."}),undefined);
+ assert.equal((await review(ana,"REVIEWED")).status,403);assert.equal((await review(boss,"APPROVED")).status,409);
+ assert.equal((await review(mgr,"REVIEWED")).status,200);assert.equal((await review(mgr,"APPROVED")).status,403);
+ const approved=await review(boss,"APPROVED");assert.equal(approved.status,200);assert.equal((await approved.json()).analysis.review.status,"APPROVED");
+ const queue=await GET(request("/api/relatorios/gerenciais/analise?kind=services&period=all&subject=Aurora&reviewQueue=1",boss),undefined);assert.equal((await queue.json()).analyses[0].review.status,"APPROVED");
+ assert.equal((await review(boss,"REJECTED")).status,409);
 });

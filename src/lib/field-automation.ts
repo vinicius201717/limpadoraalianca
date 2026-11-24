@@ -462,8 +462,9 @@ export async function processFieldStatement(input: {
   }
   authorizeFieldContext(user,orderId);
   const chargeConfirm = (!input.modelOverride || (input.modelOverride.action==="CREATE_CHARGE" && input.modelOverride.confidence==="HIGH")) && /^confirmo (?:a )?cobranca[.! ]*$/.test(comparable(text));
-  const managementQuery = !input.modelOverride && !chargeConfirm ? parseManagementReportRequest(text,db.serviceOrders.find(o=>o.id===orderId)?.title) : undefined;
-  const readOnly = input.modelOverride || chargeConfirm ? undefined : managementQuery ? {...diaryAction(),action:"REQUEST_MANAGEMENT_REPORT" as const,details:JSON.stringify(managementQuery)} : checklistReadIntent(text);
+  const currentReportMissing=!db.serviceOrders.some(o=>o.id===orderId)&&/\b(?:relatorio|relatorios)\b/.test(comparable(text))&&/\b(?:desta obra|deste servico|obra atual|servico atual)\b/.test(comparable(text));
+  const managementQuery = !input.modelOverride && !chargeConfirm ? parseManagementReportRequest(text,db.serviceOrders.find(o=>o.id===orderId)?.id) : undefined;
+  const readOnly = input.modelOverride || chargeConfirm ? undefined : currentReportMissing ? {...diaryAction(),action:"CLARIFY" as const,question:"Selecione a obra antes de solicitar seu relatório."} : managementQuery ? {...diaryAction(),action:"REQUEST_MANAGEMENT_REPORT" as const,details:JSON.stringify(managementQuery)} : checklistReadIntent(text);
   const context = readOnly ? null : fieldSpeechContext(user, orderId);
   let action = diaryAction();
   let advisory = "";
@@ -473,6 +474,7 @@ export async function processFieldStatement(input: {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
   }
   // Only an explicit analytical/AI request may start a billable report automatically.
+  if(action.action==="REQUEST_MANAGEMENT_REPORT"&&currentReportMissing){action={...diaryAction(),action:"CLARIFY",question:"Selecione a obra antes de solicitar seu relatório."};}
   if(action.action==="REQUEST_MANAGEMENT_REPORT"){
     try{
       const q=reportQuerySchema.parse(JSON.parse(action.details));
