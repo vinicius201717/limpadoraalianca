@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import {createHash,randomUUID} from "node:crypto";
 import { z } from "zod";
 
 import { getEnv, getSessionMaxAgeSeconds } from "./env";
@@ -37,10 +38,11 @@ export function signSessionToken(user: SessionUser) {
       mustChangePassword: user.mustChangePassword,
     },
     getJwtSecret(),
-    { expiresIn: SESSION_MAX_AGE_SECONDS, algorithm: "HS256", issuer: "alianca", audience: "alianca-web" },
+    { jwtid:randomUUID(), expiresIn: SESSION_MAX_AGE_SECONDS, algorithm: "HS256", issuer: "alianca", audience: "alianca-web" },
   );
 }
 
+export const sessionTokenHash=(token:string)=>createHash("sha256").update(token).digest("hex");
 export function verifySessionPayload(token?: string): SessionUser | null {
   if (!token) return null;
 

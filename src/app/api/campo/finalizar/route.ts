@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/api-handlers";
 import { withDatabase } from "@/lib/with-database";
-import { authorizeFieldContext, FieldError } from "@/lib/field-assistant";
+import { authorizeFieldContext, fieldHistory, FieldError } from "@/lib/field-assistant";
 import { processFieldStatement } from "@/lib/field-automation";
 import { diaryAction } from "@/lib/field-action-schema";
 import { consumeRateLimit } from "@/lib/rate-limit";
@@ -27,6 +27,7 @@ export const POST = withDatabase(async (request) => {
       if(persisted.serviceOrderId!==input.orderId || (persisted.kind==="FINANCIAL"&&!canViewServiceOrderFinancials(auth.user)))throw new FieldError("Sem acesso ao registro.");
       if(["office","warehouse"].includes(input.orderId))authorizeFieldContext(auth.user,input.orderId);
       else authorizeServiceOrderAccess(auth.user,input.orderId,"history");
+      if(!fieldHistory(auth.user,input.orderId).some(e=>e.id===persisted.id))throw new FieldError("Sem acesso ao registro.");
     }catch{return Response.json({message:"Sem acesso à gravação."},{status:403});}
     return Response.json({ entry: persisted, operation: { status: "diary", message: persisted.assistantReply || "Gravação já consolidada, sem duplicar ações." } });
   }

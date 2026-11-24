@@ -68,7 +68,7 @@ export function fieldHistory(user: SessionUser, orderId: string): WorkHistoryEnt
   if (orderId === "office") return db.officeJournal.filter((e) => (e.userId === user.id || ["OWNER", "GERENTE"].includes(user.role)) && (e.kind !== "FINANCIAL" || canManageWhatsAppFinance(user)));
   if (orderId === "warehouse") {
     if (!isWarehouseJournalUser(user)) throw new FieldError("Sem acesso ao diário do almoxarifado.");
-    return db.warehouseJournal;
+    return db.warehouseJournal.filter(e=>(e.kind!=="FINANCIAL"||canManageWhatsAppFinance(user))&&(e.kind!=="WARNING"||["OWNER","GERENTE"].includes(user.role)||e.userId===user.id));
   }
   // Historical consultation remains available after the work is closed.
   // Only new submissions require the active, locked fieldAssignment.

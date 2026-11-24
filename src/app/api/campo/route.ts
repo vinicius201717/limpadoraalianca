@@ -11,7 +11,7 @@ export const GET = withDatabase(async (request) => {
   const id = request.nextUrl.searchParams.get("obra");
   const base = { user: { id: auth.user.id, name: auth.user.name, role: auth.user.role, canViewFinancials: auth.user.canViewFinancials === true }, orders: assignment.orders,
     locked: assignment.locked, assignedOrderId: assignment.orderId, assignmentProblem: assignment.problem,
-    warehouseJournal: ["OWNER", "GERENTE", "ALMOXARIFADO"].includes(auth.user.role) ? db.warehouseJournal.slice(-60) : [] };
+    warehouseJournal: ["OWNER", "GERENTE", "ALMOXARIFADO"].includes(auth.user.role) ? fieldHistory(auth.user,"warehouse").slice(-60) : [] };
   if (!id) return Response.json({ ...base, entries: [], reports: [] });
   try { authorizeFieldContext(auth.user, id); }
   catch { return Response.json({ message: "Esta obra não pertence à sua escala ou perfil." }, { status: 403 }); }

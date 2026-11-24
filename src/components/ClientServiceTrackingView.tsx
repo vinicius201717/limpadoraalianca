@@ -242,7 +242,6 @@ export function ClientServiceTrackingView() {
     drawingRef.current = true;
     context.beginPath();
     context.moveTo(point.x, point.y);
-    setSignatureTouched(true);
   }
 
   function drawSignature(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -252,6 +251,7 @@ export function ClientServiceTrackingView() {
     if (!context || !point) return;
     context.lineTo(point.x, point.y);
     context.stroke();
+    setSignatureTouched(true);
   }
 
   function endSignature(event?: React.PointerEvent<HTMLCanvasElement>) {

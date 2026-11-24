@@ -91,6 +91,7 @@ const initialDb = {
   staffAttendanceReports: [] as import("./field-operational-types").StaffAttendanceReport[],
   employeeWarnings: [] as import("./whatsapp-types").EmployeeWarning[],
   financialDocuments: [] as import("./whatsapp-types").FinancialDocument[],
+  revokedSessions: [] as {hash:string;expiresAt:number}[],
   workReports: [] as import("./whatsapp-types").WorkReport[],
   managementAnalyses: [] as import("./management-report-query").SavedManagementAnalysis[],
   managementAnalysisRuns: [] as import("./management-report-query").ManagementAnalysisRun[],

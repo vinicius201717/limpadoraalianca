@@ -1,6 +1,7 @@
 import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import {isValidDeliverySignature} from "@/lib/delivery-signature";
 
 import {
   confirmClientServiceDelivery,
@@ -39,6 +40,7 @@ async function POSTHandler(request: NextRequest) {
     return NextResponse.json({ message: "Dados de entrega invalidos.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
+  if(!isValidDeliverySignature(parsed.data.signatureDataUrl))return NextResponse.json({message:"Assinatura inválida ou em branco. Assine novamente."},{status:400});
   const result = confirmClientServiceDelivery(normalizeClientAccessCode(parsed.data.code), {
     clientName: parsed.data.clientName,
     rating: parsed.data.rating,

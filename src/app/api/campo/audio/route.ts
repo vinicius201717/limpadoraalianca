@@ -1,6 +1,6 @@
 import { requireApiUser } from "@/lib/api-handlers";
 import { withDatabase } from "@/lib/with-database";
-import { FieldError, appendFieldEntry, authorizeFieldContext } from "@/lib/field-assistant";
+import { FieldError, appendFieldEntry, authorizeFieldContext, fieldHistory } from "@/lib/field-assistant";
 import { processFieldStatement } from "@/lib/field-automation";
 import { transcribeFieldAudio } from "@/lib/field-ai";
 import { writeFieldAudio } from "@/lib/field-storage";
@@ -20,7 +20,10 @@ export const POST = withDatabase(async (request) => {
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(nonce) || (sessionId && !/^[a-zA-Z0-9_-]{12,90}$/.test(sessionId)) || !(file instanceof File)) return Response.json({ message: "Gravação inválida." }, { status: 400 });
   const source = "campo:" + auth.user.id + ":" + nonce;
   const previous = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((entry) => entry.messageId === source);
-  if (previous) return Response.json({ entry: previous, operation: { status: "diary", message: "Trecho já salvo, sem duplicar." } });
+  if (previous) {
+    if(previous.serviceOrderId!==orderId||previous.recordingSessionId!==(sessionId||undefined)||!fieldHistory(auth.user,orderId).some(e=>e.id===previous.id))return Response.json({message:"Envio anterior indisponível para esta obra ou sessão."},{status:403});
+    return Response.json({ entry: previous, operation: { status: "diary", message: "Trecho já salvo, sem duplicar." } });
+  }
   const retry = await consumeRateLimit("field-audio", auth.user.id, 180, 60 * 60_000);
   if (retry) return Response.json({ message: "Limite de trechos de áudio atingido." }, { status: 429 });
   const mime = file.type.split(";")[0].trim().toLowerCase();

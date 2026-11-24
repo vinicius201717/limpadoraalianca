@@ -1,3 +1,4 @@
+import {signatureFixture} from "./signature-fixture";
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { createHmac } from "node:crypto";
@@ -1098,7 +1099,7 @@ test("integrated fictional day: supervisor audio, team, custody, finance, valida
   await command(ana,"finish-order",{action:"FINISH_ORDER"},"Encerre a obra.");
   await ok(await status(api(statusPath,ana,"PATCH",{status:"DELIVERED"}),ctx),409,"Entrega bloqueada sem aceite do cliente");
   const {POST:delivery}=await import("../src/app/api/public/service-tracking/delivery/route");
-  const signature="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFZsAAAAASUVORK5CYII=";
+  const signature=signatureFixture();
   await ok(await delivery(new NextRequest("http://localhost:3000/api/public/service-tracking/delivery",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:"ALI-TESTE-AURORA",clientName:"Cliente Fictício",rating:5,feedback:"Serviço conferido",signatureDataUrl:signature})}),undefined),200,"Aceite fictício do cliente");
   await assistantTransaction(()=>{const order=db.serviceOrders.find(o=>o.id===id)!;const items=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===id);assert.equal(order.status,"DELIVERED");assert.equal(order.expenses,430);assert.equal(items.length,6);assert.ok(items.every(i=>i.status==="DONE"&&i.validatedAt));assert.equal(db.staffAttendanceReports.length,2);const payments=db.servicePayments.filter(p=>p.serviceOrderId===id);assert.equal(payments.flatMap(p=>p.receipts).reduce((s,r)=>s+r.amount,0),4800);assert.equal(db.serviceOrders.find(o=>o.id==="teste-os-horizonte")!.expenses,150);console.log("[DAY] FINAL: 6 itens validados; receita recebida R$ 4800; despesas R$ 430; 2 ocorrências; obra entregue; segunda obra intacta.");});
 });
@@ -1323,4 +1324,64 @@ test("report formal review: author verification, independent approval and permis
  const approved=await review(boss,"APPROVED");assert.equal(approved.status,200);assert.equal((await approved.json()).analysis.review.status,"APPROVED");
  const queue=await GET(request("/api/relatorios/gerenciais/analise?kind=services&period=all&subject=Aurora&reviewQueue=1",boss),undefined);assert.equal((await queue.json()).analyses[0].review.status,"APPROVED");
  assert.equal((await review(boss,"REJECTED")).status,409);
+});
+
+
+test("audit regression: audio replay cannot disclose another assignment",async()=>{
+ const {POST}=await import("../src/app/api/campo/audio/route");
+ await assistantTransaction(()=>{
+  db.workHistory.push({id:"audit-entry",userId:supervisor.id,serviceOrderId:"a",authorName:supervisor.name,kind:"DIARY",title:"Fictitious",content:"PRIVATE-AUDIT-FIXTURE",transcript:"PRIVATE-AUDIT-FIXTURE",messageId:"campo:supervisor:audit-nonce-123",createdAt:new Date().toISOString()});
+  const a=db.serviceOrders.find(o=>o.id==="a")!;a.supervisorUserId=undefined;a.supervisorEmployeeId=undefined;a.employeeIds=[];
+  const b=db.serviceOrders.find(o=>o.id==="b")!;b.supervisorUserId=supervisor.id;b.supervisorEmployeeId="sup-employee";
+ });
+ const form=new FormData();form.set("orderId","b");form.set("nonce","audit-nonce-123");form.set("audio",new File([new Uint8Array([1,2,3])],"audio.wav",{type:"audio/wav"}));
+ const r=await POST(new NextRequest("http://localhost:3000/api/campo/audio",{method:"POST",headers:{cookie:"floor_session="+signSessionToken(supervisor)},body:form}),undefined);
+ assert.equal(r.status,403);assert.ok(!(await r.text()).includes("PRIVATE-AUDIT-FIXTURE"));assert.equal(audioCalls,0);
+});
+test("audit regression: logout revokes only the current session",async()=>{
+ const {POST}=await import("../src/app/api/auth/logout/route");
+ const {GET}=await import("../src/app/api/auth/me/route");
+ const token=signSessionToken(owner),other=signSessionToken(owner);
+ assert.notEqual(token,other);
+ const headers={cookie:"floor_session="+token};
+ assert.equal((await POST(new NextRequest("http://localhost:3000/api/auth/logout",{method:"POST",headers}),undefined)).status,200);
+ assert.equal((await GET(new NextRequest("http://localhost:3000/api/auth/me",{headers}),undefined)).status,401);
+ assert.equal((await GET(new NextRequest("http://localhost:3000/api/auth/me",{headers:{cookie:"floor_session="+other}}),undefined)).status,200);
+});
+test("audit regression: blank or forged PNG cannot deliver a work order",async()=>{
+ const {POST}=await import("../src/app/api/public/service-tracking/delivery/route");
+ await assistantTransaction(()=>{const o=db.serviceOrders.find(o=>o.id==="a")!;o.status="DONE";o.clientAccessCode="ALI-AUDIT-FIXTURE";o.clientAccessEnabled=true;});
+ for(const signatureDataUrl of ["data:image/png;base64,"+Buffer.from("NOT PNG".repeat(20)).toString("base64"),signatureFixture(true)]){
+ const r=await POST(new NextRequest("http://localhost:3000/api/public/service-tracking/delivery",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:"ALI-AUDIT-FIXTURE",clientName:"Cliente Teste",signatureDataUrl})}),undefined);
+ assert.equal(r.status,400);assert.equal(await assistantTransaction(()=>db.serviceOrders.find(o=>o.id==="a")?.status),"DONE");
+ }
+});
+test("audit regression: financial decimal labels and warehouse journal are filtered",async()=>{
+ const {managementDetails}=await import("../src/lib/management-report-detail");
+ await assistantTransaction(()=>{
+  const o=db.serviceOrders.find(o=>o.id==="a")!;o.title="Adiantamento 87654,32";
+  const result=managementDetails(manager,{kind:"services",period:"all",subject:""});
+  assert.ok(!JSON.stringify(result.report).includes("87654,32"));assert.ok(!JSON.stringify(result.sections).includes("87654,32"));
+  assert.equal(managementDetails(manager,{kind:"services",period:"all",subject:"87654,32"}).report.matched,0);
+  db.warehouseJournal.push({id:"warehouse-financial-fixture",serviceOrderId:"warehouse",userId:owner.id,authorName:owner.name,kind:"FINANCIAL",title:"Financeiro",content:"PRIVATE-FINANCE-AUDIT",transcript:"",messageId:"warehouse-test",createdAt:new Date().toISOString()});
+  assert.ok(!fieldHistory(manager,"warehouse").some(e=>e.content==="PRIVATE-FINANCE-AUDIT"));
+  assert.ok(fieldHistory(owner,"warehouse").some(e=>e.content==="PRIVATE-FINANCE-AUDIT"));
+ });
+});
+
+
+test("audit regression: the model cannot execute a clearly negated or hypothetical mutation",async()=>{
+ const {POST}=await import("../src/app/api/campo/registro/route");
+ nextIntent=fieldCommand({action:"CREATE_CHECKLIST",title:"Tarefa indevida",employeeIds:["worker"]}) as unknown as AssistantIntent;
+ for(const [i,statement] of ["Não crie a tarefa de limpar sala.","Simule a criação de uma tarefa de limpar sala.","Pode criar a tarefa?"].entries()){
+  const r=await POST(new NextRequest("http://localhost:3000/api/campo/registro",{method:"POST",headers:{cookie:"floor_session="+signSessionToken(supervisor),"Content-Type":"application/json"},body:JSON.stringify({orderId:"a",nonce:"audit-negative-"+i,text:statement})}),undefined);
+  assert.equal(r.status,200);assert.equal((await r.json()).operation.status,"pending");
+ }
+ assert.equal(await assistantTransaction(()=>db.serviceOrderChecklistItems.length),0);
+});
+test("audit regression: warehouse API base never returns financial entries to restricted manager",async()=>{
+ const {GET}=await import("../src/app/api/campo/route");
+ await assistantTransaction(()=>db.warehouseJournal.push({id:"warehouse-financial-fixture",serviceOrderId:"warehouse",userId:owner.id,authorName:owner.name,kind:"FINANCIAL",title:"Financeiro",content:"PRIVATE-FINANCE-AUDIT",transcript:"",messageId:"warehouse-test",createdAt:new Date().toISOString()}));
+ const result=await GET(request("/api/campo",manager),undefined);assert.equal(result.status,200);assert.ok(!(await result.text()).includes("PRIVATE-FINANCE-AUDIT"));
+ const permitted=await GET(request("/api/campo",owner),undefined);assert.equal(permitted.status,200);assert.ok((await permitted.text()).includes("PRIVATE-FINANCE-AUDIT"));
 });

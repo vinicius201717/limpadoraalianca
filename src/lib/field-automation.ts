@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import {parseManagementReportRequest,reportQuerySchema,reportLabels} from "./management-report-query";
 import { fieldActionSchema, diaryAction, type FieldAction } from "./field-action-schema";
 import { interpretFieldCommand } from "./field-command-ai";
-import { appendFieldEntry, authorizeFieldContext, fieldActor, fieldAssignment, FieldError } from "./field-assistant";
+import { appendFieldEntry, authorizeFieldContext, fieldActor, fieldAssignment, fieldHistory, FieldError } from "./field-assistant";
 import { authorizeServiceOrderAccess } from "./service-order-access";
 import { canManageStock, canRequestServiceMaterials, canViewServiceOrderFinancials, canValidateChecklistItem, canUpdateServiceOrderStatus } from "./permissions";
 import { pendingFinancialReceipts, settleFieldReceipt } from "./field-receipts";
@@ -457,7 +457,7 @@ export async function processFieldStatement(input: {
     if (anyEntry.serviceOrderId !== orderId) throw new FieldError("Este envio já pertence a outra obra.");
     if (["office","warehouse"].includes(orderId)) authorizeFieldContext(user,orderId);
     else authorizeServiceOrderAccess(user,orderId,"history");
-    if (anyEntry.kind==="FINANCIAL" && !canViewServiceOrderFinancials(user)) throw new FieldError("Sem permissão financeira.");
+    if(!fieldHistory(user,orderId).some(e=>e.id===anyEntry.id))throw new FieldError("Sem permissão para este registro.");
     return { entry: anyEntry, operation: { status: "diary", message: anyEntry.assistantReply || "Este relato já estava salvo. Nenhuma ação duplicada." } };
   }
   authorizeFieldContext(user,orderId);
@@ -473,6 +473,9 @@ export async function processFieldStatement(input: {
   } catch {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
   }
+  // Conservative deterministic barrier for negated or hypothetical mutation requests.
+  const mutation=/^(CREATE_CHECKLIST|ASSIGN_CHECKLIST|START_CHECKLIST|COMPLETE_CHECKLIST|BLOCK_CHECKLIST|REQUEST_MATERIAL|STOCK_.*|EQUIPMENT_.*|REPORT_ABSENCE|REPORT_EARLY_LEAVE|DESCRIBE_RECEIPT)$/;
+  if(mutation.test(action.action)&&(/\b(?:nunca|talvez|hipoteticamente|suponha|simule|simulacao|exemplo)\b|\bnao\s+(?:(?:quero|pode|precisa|deve|vou|foi|foram|ainda)\s+){0,3}(?:cri\w*|adicion\w*|coloc\w*|atribu\w*|inici\w*|comec\w*|termin\w*|conclu\w*|bloqu\w*|solicit\w*|ped\w*|retir\w*|lev\w*|entreg\w*|receb\w*|devolv\w*|consum\w*|gast\w*|perd\w*|danific\w*|falt\w*|sa[iu]\w*|registr\w*|alter\w*|descrev\w*|execut\w*|fac\w*)\b/.test(comparable(text))||text.trim().endsWith("?"))){action={...diaryAction(),action:"CLARIFY",question:"O relato contém uma negação, hipótese ou pergunta. Confirme a ação afirmativamente antes de alterar os registros."};}
   // Only an explicit analytical/AI request may start a billable report automatically.
   if(action.action==="REQUEST_MANAGEMENT_REPORT"&&currentReportMissing){action={...diaryAction(),action:"CLARIFY",question:"Selecione a obra antes de solicitar seu relatório."};}
   if(action.action==="REQUEST_MANAGEMENT_REPORT"){

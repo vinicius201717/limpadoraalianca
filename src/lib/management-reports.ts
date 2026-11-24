@@ -18,7 +18,7 @@ export function buildManagementReport(user:SessionUser,q:ReportQuery,now=new Dat
  const financial=canViewServiceOrderFinancials(user), {today,start,end,during,orderIncluded}=reportPeriod(q,now,financial);
  const label=(s?:string)=>reportLabel(s,financial);
  const search=normalizeReportText(q.subject);
- const matches=(...values:(string|undefined)[])=>!search||values.some(v=>v&&normalizeReportText(v).includes(search));
+ const matches=(...values:(string|undefined)[])=>!search||values.some(v=>v&&normalizeReportText(label(v)).includes(search));
  const metric=(label:string,value:number|string)=>({label,value:typeof value==="number"?n(value):value});
  const users=new Map(db.users.map(u=>[u.id,u])), employees=new Map(db.employees.map(e=>[e.id,e]));
  const validOrders=new Set(db.serviceOrders.filter(o=>o.status!=="CANCELED").map(o=>o.id));

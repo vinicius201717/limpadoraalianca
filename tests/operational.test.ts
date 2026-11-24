@@ -1,3 +1,4 @@
+import {signatureFixture} from "./signature-fixture";
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { NextRequest } from "next/server";
@@ -157,7 +158,7 @@ test("simultaneous API mutations return a conflict instead of a false success", 
 });
 test("public delivery rejects premature acceptance and does not disclose internal fields on repeats", async () => {
   const { POST } = await import("../src/app/api/public/service-tracking/delivery/route");
-  const body = { code: "TEST-CODE", signatureDataUrl: `data:image/png;base64,${"A".repeat(100)}` };
+  const body = { code: "TEST-CODE", signatureDataUrl: signatureFixture() };
   assert.equal((await POST(request("/api/public/service-tracking/delivery", "POST", body), undefined)).status, 409);
   const order = (state().serviceOrders as ServiceOrder[])[0]; order.status = "DELIVERED"; order.clientDeliverySignedAt = new Date().toISOString();
   const repeated = await POST(request("/api/public/service-tracking/delivery", "POST", body), undefined);

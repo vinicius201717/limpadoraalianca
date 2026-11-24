@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireApiUser } from "@/lib/api-handlers";
 import { withDatabase } from "@/lib/with-database";
-import { FieldError, appendFieldEntry, fieldOrders } from "@/lib/field-assistant";
+import { FieldError, appendFieldEntry, fieldOrders, fieldHistory } from "@/lib/field-assistant";
 import { describeFieldVisual, parseFrameData } from "@/lib/field-ai";
 import { fieldAttachment, readFieldImage, verifyUploadedMedia, verifyUploadTicket } from "@/lib/field-storage";
 import { consumeRateLimit } from "@/lib/rate-limit";
@@ -24,7 +24,10 @@ export const POST = withDatabase(async (request) => {
     if (claim.userId !== auth.user.id || claim.sessionVersion !== (auth.user.sessionVersion ?? 0) || !fieldOrders(auth.user).some((o) => o.id === claim.orderId))
       throw new FieldError("Anexo não pertence à sua conta ou obra.");
     const previous = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((entry) => entry.messageId === `campo:${auth.user.id}:${input.nonce}`);
-    if (previous) return Response.json({ entry: previous });
+    if (previous) {
+      if(previous.serviceOrderId!==claim.orderId||previous.attachment?.storagePath!==claim.path||!fieldHistory(auth.user,claim.orderId).some(e=>e.id===previous.id))throw new FieldError("Envio anterior indisponível para esta obra.");
+      return Response.json({ entry: previous });
+    }
     if (claim.type === "document") throw new FieldError("Envie PDFs somente pela opção Comprovante.");
     await verifyUploadedMedia(claim);
     let analysis = ""; let analysisFailed = false;
