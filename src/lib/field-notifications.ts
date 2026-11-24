@@ -10,10 +10,9 @@ export type FieldPushSubscription = { id:string; userId:string; sessionVersion:n
 export type FieldPushDelivery = { id:string; subscriptionId:string; noticeId:string; state:"CLAIMED"|"SENT"|"FAILED"; at:string; attempts?:number };
 export type FieldNoticeRead = { id:string; userId:string; at:string };
 export const reminderSlots = [
-  { hour:9,kind:"PROGRESS",title:"Como está a obra?",body:"Relate o andamento, equipe, dificuldades e próximas tarefas." },
+  { hour:9,kind:"PROGRESS",title:"Como está a obra?",body:"Relate as condições da obra, dificuldades, necessidades da equipe ou imprevistos que não estejam no checklist." },
   { hour:12,kind:"ORGANIZATION",title:"Hora de conferir os materiais",body:"Verifique se produtos, ferramentas e máquinas estão organizados e seguros na obra. Envie um relato." },
-  { hour:15,kind:"PROGRESS",title:"Atualização da obra",body:"Informe o que foi concluído, o que falta e qualquer impedimento." },
-  { hour:16,kind:"CHECKLIST",title:"Conferência antes de encerrar",body:"Confira o checklist, a organização e o recolhimento dos materiais. Informe pendências antes de sair." },
+  { hour:16,kind:"CHECKLIST",title:"Conferência antes de encerrar",body:"Confira a organização, o recolhimento dos materiais e as condições de segurança antes de sair. Informe apenas ocorrências não registradas." },
 ] as const;
 export const noticeId=(...parts:string[])=>createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 const dayKey=(date:Date)=>Number.isFinite(date.getTime())?new Intl.DateTimeFormat("en-CA",{timeZone:"America/Sao_Paulo",year:"numeric",month:"2-digit",day:"2-digit"}).format(date):"";
@@ -37,10 +36,14 @@ export function fieldNotices(user:SessionUser,now=new Date()):FieldNotice[] {
     // Remind only the designated supervisor, on days the work is scheduled or actively underway.
     if(user.role==="SUPERVISOR_OBRA" && ["IN_PROGRESS","SCHEDULED","PREPARING"].includes(order.status) &&
       !!scheduledDay(order.scheduledStart) && scheduledDay(order.scheduledStart)<=day && (order.status==="IN_PROGRESS" || day<=scheduledDay(order.scheduledEnd))) {
-      const configured=(process.env.FIELD_REMINDER_HOURS||"9,12,15,16").split(",").map(x=>Number(x.trim()));
+      const rawHours=(process.env.FIELD_REMINDER_HOURS||"9,12,16").split(",").map(x=>Number(x.trim()));
+      // Preserve the old four-hour configuration, ignoring the retired progress reminder.
+      const configured=rawHours.length===4?[rawHours[0],rawHours[1],rawHours[3]]:rawHours;
       for(const slot of reminderSlots.map((s,i)=>({...s,hour:Number.isInteger(configured[i])&&configured[i]>=6&&configured[i]<=20?configured[i]:s.hour})).filter(s=>s.hour<=hour)){
         rows.push({id:noticeId(user.id,order.id,day,String(slot.hour),slot.title),orderId:order.id,title:slot.title,body:order.title+" — "+slot.body,kind:slot.kind,scheduled:true,createdAt:day+"T"+String(slot.hour).padStart(2,"0")+":00:00-03:00"});
       }
+      const awaiting=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===order.id&&i.status==="DONE"&&!i.validatedAt&&!i.validatedByUserId&&i.completedByUserId&&db.users.some(u=>u.id===i.completedByUserId&&u.role==="COLABORADOR"));
+      for(const item of awaiting) rows.push({id:noticeId(user.id,item.id,"awaiting-validation",item.completedAt||item.updatedAt),orderId:order.id,title:"Serviço aguardando sua conferência",body:order.title+" — "+item.title+". Confira a entrega e confirme se estiver correta.",kind:"CHECKLIST",createdAt:item.completedAt||item.updatedAt});
       const blocked=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===order.id&&i.status==="BLOCKED");
       for(const item of blocked) rows.push({id:noticeId(user.id,item.id,"blocked",item.updatedAt),orderId:order.id,title:"Item bloqueado no checklist",body:order.title+" — "+item.title+(item.blockedReason?" — "+item.blockedReason:""),kind:"BLOCKED",createdAt:item.updatedAt});
       for(const item of db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===order.id&&!["DONE","CANCELED","BLOCKED"].includes(i.status)&&i.dueAt&&scheduledDay(i.dueAt)<day)) rows.push({id:noticeId(user.id,item.id,"overdue",day),orderId:order.id,title:"Tarefa com prazo vencido",body:order.title+" — "+item.title+". Verifique o motivo e atualize o checklist.",kind:"CHECKLIST",createdAt:day+"T09:00:00-03:00"});

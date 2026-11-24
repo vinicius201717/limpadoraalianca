@@ -984,3 +984,21 @@ test("cron sends only authorized recent notifications and does not send them twi
     await assistantTransaction(()=>assert.equal(db.fieldPushDeliveries.filter(d=>d.state==="SENT").length,1));
   }finally{envKeys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i]});}
 });
+
+
+test("supervisor receives only outstanding delivery validation alerts, not a redundant afternoon progress report",async()=>{
+  const {fieldNotices}=await import("../src/lib/field-notifications");
+  const now=new Date("2026-12-02T18:05:00Z");
+  const previous=process.env.FIELD_REMINDER_HOURS;
+  process.env.FIELD_REMINDER_HOURS="9,12,15,16";
+  try{
+    await assistantTransaction(()=>{
+      const base:import("../src/lib/types").ServiceOrderChecklistItem={id:"delivery",serviceOrderId:"a",title:"Vidros",description:"",sortOrder:1,status:"DONE" as const,isRequired:true,requiresPhoto:false,minimumPhotos:0,completedByUserId:collaborator.id,createdByUserId:owner.id,createdAt:now.toISOString(),updatedAt:now.toISOString(),completedAt:now.toISOString()};
+      db.serviceOrderChecklistItems.push(base,{...base,id:"already-reviewed",validatedAt:now.toISOString(),validatedByUserId:supervisor.id},{...base,id:"supervisor-completed",completedByUserId:supervisor.id},{...base,id:"other-work",serviceOrderId:"b"});
+      const notices=fieldNotices(supervisor,now);
+      assert.equal(notices.filter(n=>n.scheduled).length,2);
+      assert.equal(notices.filter(n=>n.title==="Serviço aguardando sua conferência").length,1);
+      base.validatedAt=now.toISOString(); assert.equal(fieldNotices(supervisor,now).filter(n=>n.title==="Serviço aguardando sua conferência").length,0);
+    });
+  }finally{if(previous===undefined)delete process.env.FIELD_REMINDER_HOURS;else process.env.FIELD_REMINDER_HOURS=previous;}
+});
