@@ -16,7 +16,7 @@ export const GET = withDatabase(async (request) => {
   try { authorizeFieldContext(auth.user, id); }
   catch { return Response.json({ message: "Esta obra não pertence à sua escala ou perfil." }, { status: 403 }); }
   const entries = fieldHistory(auth.user, id).slice(-150);
-  const reports = id === "warehouse" || id === "office" ? [] : db.workReports.filter((item) => item.serviceOrderId === id &&
+  const reports = !["OWNER","GERENTE"].includes(auth.user.role) || id === "warehouse" || id === "office" ? [] : db.workReports.filter((item) => item.serviceOrderId === id &&
     item.userId === auth.user.id && item.scope === reportScope(auth.user)).slice(-3);
   return Response.json({ ...base, entries, reports });
 });

@@ -321,7 +321,7 @@ test("report prompt contains only accessible history and saves source references
     saveDiary(supervisor, intent({ action: "DIARY", details: "Piso preparado" }), "diary", "Original");
     const command = proposeCommand(owner, phone, intent({ action: "FILE_RECEIPT", financialDirection: "ARCHIVE", details: "SEGREDO_FINANCEIRO" }), "receipt", "Confidencial", receipt); confirmCommand(owner, phone, command.code);
   });
-  reportMode = true; const report = await createWorkReport(supervisor.id, "a");
+  reportMode = true; const report = await createWorkReport(manager.id, "a");
   assert.ok(report.sourceIds.length >= 2); assert.ok(!prompts[0].includes("SEGREDO_FINANCEIRO")); assert.ok(!prompts[0].includes('"revenue"'));
   await assert.rejects(createWorkReport(supervisor.id, "b"));
 });
@@ -802,8 +802,9 @@ test("voice switching only targets active works assigned to the current supervis
   assert.equal(invalid.operation.status, "pending");
   assert.equal(invalid.operation.ui, undefined);
 });
-test("a voice report request is scoped to one work and cannot run in a general journal", async () => {
-  const requested = await runFieldCommand(supervisor, "a", "request-report-0001",
+test("legacy voice report is restricted to management and scoped to one work", async () => {
+  const forbidden = await runFieldCommand(supervisor,"a","request-report-denied",fieldCommand({action:"REQUEST_REPORT"})); assert.equal(forbidden.operation.status,"pending"); assert.equal(forbidden.operation.ui,undefined);
+  const requested = await runFieldCommand(owner, "a", "request-report-0001",
     fieldCommand({ action: "REQUEST_REPORT" }), "Faça um relatório desta obra.");
   assert.equal(requested.operation.ui?.kind, "REPORT");
   assert.equal(requested.operation.ui?.value, "a");
@@ -1134,4 +1135,47 @@ test("voice validation rejects unfinished items, negated commands and other role
   await runFieldCommand(supervisor,"a","validate-repeat-001",validate,"Valide a sala.");
   await assistantTransaction(()=>assert.equal(db.serviceOrderChecklistEvents.filter(e=>e.checklistItemId===id&&e.type==="VALIDATED").length,1));
   assert.equal((await runFieldCommand(supervisor,"a","close-question-0001",fieldCommand({action:"FINISH_ORDER"}),"Posso encerrar a obra?")).operation.status,"pending");
+});
+
+
+test("management reports cover all categories, enforce roles and redact financial columns",async()=>{
+ const {buildManagementReport}=await import("../src/lib/management-reports");
+ const {GET}=await import("../src/app/api/relatorios/gerenciais/route");
+ const {audioTestData}=await import("../scripts/audio-test-data.mjs");
+ const scenario=await audioTestData();
+ rows.set(APP_STATE_ID,{data:scenario,updated_at:new Date().toISOString()});
+ const person=(slug:string)=>scenario.users.find(u=>u.id==="teste-"+slug)! as SystemUser;
+ const ana=person("supervisor"), boss=person("owner"), gerente={...person("gerente"),canViewFinancials:false};
+ await assistantTransaction(()=>{
+  db.users.find(u=>u.id===gerente.id)!.canViewFinancials=false;
+  const query={kind:"services" as const,period:"all" as const,subject:"Aurora"};
+  const report=buildManagementReport(boss,query);
+  assert.equal(report.matched,1);assert.ok(report.columns.includes("Contrato"));assert.match(report.rows[0].cells.join(" "),/4\.800/);
+  const masked=buildManagementReport(gerente,query);assert.ok(!masked.columns.includes("Contrato"));assert.ok(!JSON.stringify(masked).includes("4.800"));
+  for(const [kind,subject,expected] of [["supervisors","Ana",1],["employees","Carlos",1],["managers","Marcos",1],["materials","Detergente",1]] as const){
+   const r=buildManagementReport(gerente,{kind,period:"all",subject});assert.equal(r.matched,expected,kind);assert.ok(r.columns.length>0);assert.ok(r.rows[0].cells.length===r.columns.length);
+  }
+  assert.equal(buildManagementReport(boss,{kind:"services",period:"all",subject:"inexistente"}).matched,0);
+  assert.throws(()=>buildManagementReport(ana,query));
+ });
+ for(const slug of ["supervisor","almoxarifado","financeiro","carlos"]){const r=await GET(request("/api/relatorios/gerenciais?kind=employees",person(slug)),undefined);assert.equal(r.status,403,slug);}
+ const ownerResult=await GET(request("/api/relatorios/gerenciais?kind=materials&period=all",boss),undefined);assert.equal(ownerResult.status,200);
+ assert.equal((await GET(request("/api/relatorios/gerenciais?kind=wrong",boss),undefined)).status,400);
+ const managerResult=await GET(request("/api/relatorios/gerenciais?kind=materials&period=all",gerente),undefined);assert.equal(managerResult.status,200);assert.ok(!(await managerResult.text()).includes("Valor estoque atual"));
+});
+test("Portuguese management report requests from chat open a private read-only panel without AI and reject non-managers",async()=>{
+ const {parseManagementReportRequest}=await import("../src/lib/management-report-query");
+ assert.deepEqual(parseManagementReportRequest("Me manda o relatório do supervisor Carlos dos últimos 7 dias"),{kind:"supervisors",period:"7",subject:"carlos"});
+ assert.deepEqual(parseManagementReportRequest("Me dá um relatório do almoxarifado de hoje"),{kind:"materials",period:"today",subject:""});
+ assert.equal(parseManagementReportRequest("Não gere relatório dos colaboradores"),undefined);
+ for(const [i,text,kind] of [["1","Relatório de serviços","services"],["2","Relatório de supervisores","supervisors"],["3","Relatório de colaboradores","employees"],["4","Relatório de gerentes","managers"],["5","Relatório de materiais","materials"]]){
+  await runWithStore(async()=>{await ensureDatabaseReady();const r=await processFieldStatement({user:owner,orderId:"office",nonce:"management-report-"+i,text});assert.equal(r.operation.status,"executed",r.operation.message);assert.equal(r.operation.ui?.kind,"MANAGEMENT_REPORT");assert.equal(JSON.parse(r.operation.ui!.value).kind,kind);assert.ok(!r.entry.assistantReply?.includes("R$"));return Response.json({ok:true});});
+ }
+ assert.equal(aiCalls,0);
+ const denied=await runFieldCommand(supervisor,"a","report-privacy-denied",fieldCommand({action:"REQUEST_MANAGEMENT_REPORT",details:JSON.stringify({kind:"employees",period:"all",subject:""})}));
+ assert.equal(denied.operation.status,"pending");assert.equal(denied.operation.ui,undefined);
+ await runWithStore(async()=>{await ensureDatabaseReady();const r=await processFieldStatement({user:finance,orderId:"office",nonce:"finance-report-denied",text:"Relatório de supervisores"});assert.equal(r.operation.status,"pending");assert.equal(r.operation.ui,undefined);return Response.json({ok:true});});
+ const {POST}=await import("../src/app/api/service-orders/[id]/history/report/route");
+ assert.equal((await POST(new NextRequest("http://localhost:3000/api/service-orders/a/history/report",{method:"POST",headers:{cookie:"floor_session="+signSessionToken(supervisor)}}),{params:Promise.resolve({id:"a"})})).status,403);
+ assert.equal(aiCalls,0);
 });

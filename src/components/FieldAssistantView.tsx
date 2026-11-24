@@ -21,6 +21,8 @@ import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import DoneAllRoundedIcon from "@mui/icons-material/DoneAllRounded";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import { FieldReceiptsBoard } from "./FieldReceiptsBoard";
+import {ManagementReportsPanel} from "./ManagementReportsPanel";
+import {reportQuerySchema,type ReportQuery} from "@/lib/management-report-query";
 import { FieldNotifications } from "./FieldNotifications";
 import type { WorkHistoryEntry, WorkReport } from "@/lib/whatsapp-types";
 
@@ -30,7 +32,7 @@ type Data = { user: { id?: string; name: string; role: string; canViewFinancials
   locked?: boolean; assignedOrderId?: string | null; assignmentProblem?: string | null };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 type StaffReport = { id: string; employeeName: string; occurredOn: string; occurredAt?: string; kind: "ABSENCE" | "EARLY_LEAVE"; description: string; reportedByName: string };
-type FieldOperation = { status: string; message: string; ui?: { kind: "THEME" | "ORDER" | "REPORT"; value: string } };
+type FieldOperation = { status: string; message: string; ui?: { kind: "THEME" | "ORDER" | "REPORT" | "MANAGEMENT_REPORT"; value: string } };
 type FieldColor = "dark" | "light";
 const newNonce = () => crypto.randomUUID().replace(/-/g, "");
 async function retryCommit(send: () => Promise<Response>) {
@@ -122,6 +124,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const [warehouseOpen, setWarehouseOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<FieldColor>("dark");
   const [attachmentAnchor, setAttachmentAnchor] = useState<HTMLElement | null>(null);
+  const [managementReport,setManagementReport]=useState<ReportQuery|null>(null);
   const [headerAnchor, setHeaderAnchor] = useState<HTMLElement | null>(null);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -221,7 +224,10 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       setOrderId(ui.value);
       void load(ui.value).catch((cause) => setError(cause instanceof Error ? cause.message : "Falha ao mudar de obra."));
     }
-    if (ui.kind === "REPORT" && ui.value === orderRef.current && !["office", "warehouse"].includes(ui.value)) {
+    if(ui.kind==="MANAGEMENT_REPORT"&&["OWNER","GERENTE"].includes(data.user.role)){
+      try{const q=reportQuerySchema.parse(JSON.parse(ui.value));setManagementReport(q);}catch{setError("Filtros de relatório inválidos.");}
+    }
+    if (ui.kind === "REPORT" && ["OWNER","GERENTE"].includes(data.user.role) && ui.value === orderRef.current && !["office", "warehouse"].includes(ui.value)) {
       const target = ui.value;
       setNotice("Gerando relatório por comando de voz...");
       void (async () => {
@@ -521,6 +527,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
           {canStaff && <MenuItem onClick={()=>{setHeaderAnchor(null);void openStaff();}}><PeopleAltRoundedIcon fontSize="small"/>Ocorrências da equipe</MenuItem>}
           {canFinance && <MenuItem onClick={()=>{setHeaderAnchor(null);void openFinance();}}><ReceiptLongRoundedIcon fontSize="small"/>Comprovantes financeiros</MenuItem>}
           {["OWNER","GERENTE","ALMOXARIFADO"].includes(data.user.role) && <MenuItem onClick={()=>{setHeaderAnchor(null);void openWarehouse();}}><Inventory2RoundedIcon fontSize="small"/>Almoxarifado</MenuItem>}
+          {["OWNER","GERENTE"].includes(data.user.role)&&<MenuItem onClick={()=>{setHeaderAnchor(null);setManagementReport({kind:"services",period:"30",subject:""});}}><AutoAwesomeRoundedIcon fontSize="small"/>Relatórios gerenciais</MenuItem>}
           <MenuItem onClick={()=>{setHeaderAnchor(null);changeTheme();}}>{themeMode==="dark"?<LightModeRoundedIcon fontSize="small"/>:<DarkModeRoundedIcon fontSize="small"/>}{themeMode==="dark"?"Ativar tema claro":"Ativar tema escuro"}</MenuItem>
           <MenuItem onClick={()=>{setHeaderAnchor(null);void load(orderRef.current).catch(e=>setError(e.message));}}><ReplayRoundedIcon fontSize="small"/>Atualizar histórico</MenuItem>
         </Menu>
@@ -692,7 +699,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
         <MenuItem onClick={() => { setAttachmentAnchor(null); videoInput.current?.click(); }}><VideocamRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Vídeo da obra</MenuItem>
         <MenuItem onClick={() => { setAttachmentAnchor(null); receiptCameraInput.current?.click(); }}><CameraAltRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Fotografar comprovante</MenuItem>
         <MenuItem onClick={() => { setAttachmentAnchor(null); receiptFileInput.current?.click(); }}><ReceiptLongRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Enviar comprovante / PDF</MenuItem>
-        {orderId !== "office" && orderId !== "warehouse" && <MenuItem onClick={() => { setAttachmentAnchor(null); void generateReport(); }}><AutoAwesomeRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Gerar relatório da obra</MenuItem>}
+        {["OWNER","GERENTE"].includes(data.user.role) && orderId !== "office" && orderId !== "warehouse" && <MenuItem onClick={() => { setAttachmentAnchor(null); void generateReport(); }}><AutoAwesomeRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Gerar relatório da obra</MenuItem>}
       </Menu>
       <input ref={cameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden
         onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadFile(file, "image"); }} />
@@ -705,6 +712,10 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       <input ref={receiptCameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden
         onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; selectReceipt(file); }} />
 
+      {managementReport&&["OWNER","GERENTE"].includes(data.user.role)&&<Dialog open fullScreen sx={{zIndex:1850}} onClose={()=>setManagementReport(null)}>
+        <DialogTitle sx={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>Consulta privada<IconButton aria-label="Fechar relatório" onClick={()=>setManagementReport(null)}><CloseRoundedIcon/></IconButton></DialogTitle>
+        <DialogContent sx={{p:1}}><ManagementReportsPanel key={JSON.stringify(managementReport)} initialQuery={managementReport} compact/></DialogContent>
+      </Dialog>}
       <Dialog sx={{ zIndex: 1800 }} open={receiptOpen} onClose={busy || dictating ? undefined : () => { setReceiptOpen(false); setReceiptFile(null); }}
         fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: colors.dialog, color: colors.text, borderRadius: 3 } }}>
         <DialogTitle sx={{ fontWeight: 850, display: "flex", alignItems: "center", gap: 1 }}>

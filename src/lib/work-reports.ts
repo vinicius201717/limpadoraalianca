@@ -11,7 +11,7 @@ import type { SessionUser } from "./types";
 export const reportScope = (user: SessionUser) => `${user.role}:${canManageWhatsAppFinance(user) ? "finance" : "operational"}`;
 export async function createWorkReport(userId: string, orderId: string) {
   const snapshot = await assistantTransaction(() => {
-    const user = db.users.find((entry) => entry.id === userId); fieldActor(user);
+    const user = db.users.find((entry) => entry.id === userId); fieldActor(user); if(!["OWNER","GERENTE"].includes(user.role))throw new AssistantError("Relatórios exclusivos do dono e do gerente.");
     const order = authorizeServiceOrderAccess(user, orderId, "history").order;
     const allHistory = fieldHistory(user, orderId);
     const entries = allHistory.slice(-300).map(({ id, authorName, kind, title, content, createdAt }) => ({ id, authorName, kind, title, content, createdAt }));
@@ -21,7 +21,7 @@ export async function createWorkReport(userId: string, orderId: string) {
   });
   const content = await generateWorkReport(snapshot.input);
   return assistantTransaction(() => {
-    const user = db.users.find((entry) => entry.id === userId); fieldActor(user);
+    const user = db.users.find((entry) => entry.id === userId); fieldActor(user); if(!["OWNER","GERENTE"].includes(user.role))throw new AssistantError("Relatórios exclusivos do dono e do gerente.");
     authorizeServiceOrderAccess(user, orderId, "history");
     if (reportScope(user) !== snapshot.scope || (user.sessionVersion ?? 0) !== snapshot.sessionVersion) throw new AssistantError("Suas permissões mudaram. Gere o relatório novamente.");
     const report = { id: randomUUID(), serviceOrderId: orderId, userId, content, sourceIds: snapshot.sourceIds, scope: snapshot.scope, createdAt: new Date().toISOString(), model: assistantModel() };

@@ -55,6 +55,7 @@ import type {
   SiteBeforeAfter,
   SiteTestimonial,
 } from "@/lib/types";
+import { ManagementReportsPanel } from "./ManagementReportsPanel";
 import { SiteContentManager } from "./SiteContentManager";
 import { StatusChip } from "./StatusChip";
 import { useCurrentUser } from "./useCurrentUser";
@@ -754,6 +755,8 @@ export function DashboardView({
           </Button>
         </Stack>
       </Stack>
+
+      {(user?.role === "OWNER" || user?.role === "GERENTE") && <ManagementReportsPanel/>}
 
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 2.5 }, borderRadius: 2 }}>
         <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5}>

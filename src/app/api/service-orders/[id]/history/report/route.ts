@@ -7,6 +7,7 @@ import { consumeRateLimit } from "@/lib/rate-limit";
 export const maxDuration = 120;
 export const POST = withDatabase(async (request, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireApiUser(request); if (auth.response) return auth.response;
+  if(!["OWNER","GERENTE"].includes(auth.user.role))return Response.json({message:"Relatórios exclusivos do dono e do gerente."},{status:403});
   const { id } = await context.params;
   try { visibleHistory(auth.user, id); } catch { return Response.json({ message: "Sem permissão para esta obra." }, { status: 403 }); }
   const retry = await consumeRateLimit("work-report", auth.user.id, 10, 60 * 60_000);

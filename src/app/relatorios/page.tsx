@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { scopedOperationalData } from "@/lib/operational-page-data";
+import { ManagementReportsPanel } from "@/components/ManagementReportsPanel";
 import { ReportsView } from "@/components/ReportsView";
 import { getCurrentUser } from "@/lib/auth";
 import { canAccessOperationalReports, canViewServiceOrderFinancials } from "@/lib/permissions";
@@ -19,6 +20,7 @@ export default async function ReportsPage() {
 
   const data = scopedOperationalData(user);
   return (
+    <><div style={{marginBottom:24}}>{canViewOperations && <ManagementReportsPanel/>}</div>
     <ReportsView
       user={user}
       serviceOrders={getAccessibleServiceOrders(user)}
@@ -28,6 +30,6 @@ export default async function ReportsPage() {
       expenses={canViewFinancials ? db.serviceExpenses : []}
       canViewOperations={canViewOperations}
       canViewFinancials={canViewFinancials}
-    />
+    /></>
   );
 }

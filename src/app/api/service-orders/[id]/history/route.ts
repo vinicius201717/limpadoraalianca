@@ -11,7 +11,7 @@ export const GET = withDatabase(async (request, context: { params: Promise<{ id:
   try {
     const entries = fieldHistory(auth.user, id);
     const documents = canManageWhatsAppFinance(auth.user) ? db.financialDocuments.filter((entry) => entry.serviceOrderId === id) : [];
-    const reports = db.workReports.filter((entry) => entry.serviceOrderId === id && entry.userId === auth.user.id && entry.scope === reportScope(auth.user));
-    return Response.json({ entries, documents, reports, title: db.serviceOrders.find((entry) => entry.id === id)?.title });
+    const canGenerateReport=["OWNER","GERENTE"].includes(auth.user.role); const reports = canGenerateReport ? db.workReports.filter((entry) => entry.serviceOrderId === id && entry.userId === auth.user.id && entry.scope === reportScope(auth.user)) : [];
+    return Response.json({ entries, documents, reports, canGenerateReport, title: db.serviceOrders.find((entry) => entry.id === id)?.title });
   } catch { return Response.json({ message: "Sem permissão para o histórico desta obra." }, { status: 403 }); }
 });

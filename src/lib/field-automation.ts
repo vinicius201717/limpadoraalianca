@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import {parseManagementReportRequest,reportQuerySchema,reportLabels} from "./management-report-query";
 import { fieldActionSchema, diaryAction, type FieldAction } from "./field-action-schema";
 import { interpretFieldCommand } from "./field-command-ai";
 import { appendFieldEntry, authorizeFieldContext, fieldActor, fieldAssignment, FieldError } from "./field-assistant";
@@ -18,7 +19,7 @@ import { applyEquipmentMovement, applyMaterialMovement, InventoryError, isArchiv
 import type { AssistantAttachment, WorkHistoryEntry } from "./whatsapp-types";
 import type { Material, ServiceOrder, ServiceOrderEquipment, ServiceOrderMaterial, SessionUser } from "./types";
 
-type UiDirective = { kind: "THEME" | "ORDER" | "REPORT"; value: string };
+type UiDirective = { kind: "THEME" | "ORDER" | "REPORT" | "MANAGEMENT_REPORT"; value: string };
 type Outcome = { finishOrder?: ServiceOrder; checklist?: WorkHistoryEntry["checklistReply"]; message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string; ui?: UiDirective };
 const rounded = (n: number) => Math.round(n * 1e6) / 1e6;
 const comparable = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -200,7 +201,14 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
     return { message: "Conversa alterada para " + allowed.title + ".",
       ui: { kind: "ORDER", value: allowed.id } };
   }
+  if (action.action === "REQUEST_MANAGEMENT_REPORT") {
+    if(!["OWNER","GERENTE"].includes(user.role))throw new FieldError("Relatórios gerenciais são exclusivos do dono e do gerente.");
+    let parsed;try{parsed=reportQuerySchema.safeParse(JSON.parse(action.details));}catch{throw new FieldError("Informe qual categoria de relatório deseja consultar.");}
+    if(!parsed.success)throw new FieldError("Filtros de relatório inválidos.");
+    return {message:"Relatório de "+reportLabels[parsed.data.kind].toLowerCase()+" disponível em consulta privada.",ui:{kind:"MANAGEMENT_REPORT",value:JSON.stringify(parsed.data)}};
+  }
   if (action.action === "REQUEST_REPORT") {
+    if(!["OWNER","GERENTE"].includes(user.role))throw new FieldError("Relatórios são exclusivos do dono e do gerente.");
     if (["office", "warehouse"].includes(currentOrder)) throw new FieldError("Selecione uma obra para gerar relatório.");
     authorizeServiceOrderAccess(user, currentOrder, "history");
     return { message: "Iniciando relatório da obra atual.",
@@ -454,7 +462,8 @@ export async function processFieldStatement(input: {
   }
   authorizeFieldContext(user,orderId);
   const chargeConfirm = (!input.modelOverride || (input.modelOverride.action==="CREATE_CHARGE" && input.modelOverride.confidence==="HIGH")) && /^confirmo (?:a )?cobranca[.! ]*$/.test(comparable(text));
-  const readOnly = input.modelOverride || chargeConfirm ? undefined : checklistReadIntent(text);
+  const managementQuery = !input.modelOverride && !chargeConfirm ? parseManagementReportRequest(text,db.serviceOrders.find(o=>o.id===orderId)?.title) : undefined;
+  const readOnly = input.modelOverride || chargeConfirm ? undefined : managementQuery ? {...diaryAction(),action:"REQUEST_MANAGEMENT_REPORT" as const,details:JSON.stringify(managementQuery)} : checklistReadIntent(text);
   const context = readOnly ? null : fieldSpeechContext(user, orderId);
   let action = diaryAction();
   let advisory = "";
