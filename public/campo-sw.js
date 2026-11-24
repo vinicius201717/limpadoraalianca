@@ -1,4 +1,4 @@
-const VERSION = "alianca-campo-v1";
+const VERSION = "alianca-campo-v2";
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(["/campo-offline.html", "/campo-icon-192.png"])));
   self.skipWaiting();
@@ -13,4 +13,22 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(fetch(event.request).catch(() => caches.match("/campo-offline.html")));
   }
   // Never cache private API responses, audio, images, videos or authenticated diaries.
+});
+
+self.addEventListener("push", event => {
+  let payload={};try{payload=event.data?.json()||{};}catch{}
+  event.waitUntil(self.registration.showNotification("Aliança Campo",{
+    body:typeof payload.body==="string"?payload.body.slice(0,180):"Você tem um novo aviso. Abra o aplicativo.",
+    icon:"/campo-icon-192.png",badge:"/campo-icon-192.png",
+    tag:typeof payload.tag==="string"?payload.tag.slice(0,100):"campo-aviso",
+    data:{url:"/campo?avisos=1"}
+  }));
+});
+self.addEventListener("notificationclick", event=>{
+  event.notification.close();
+  event.waitUntil((async()=>{
+    const windows=await self.clients.matchAll({type:"window",includeUncontrolled:true});
+    for(const client of windows){const u=new URL(client.url);if(u.origin===self.location.origin&&u.pathname==="/campo"){await client.focus();client.postMessage({type:"CAMPO_OPEN_NOTICES"});return;}}
+    await self.clients.openWindow("/campo?avisos=1");
+  })());
 });

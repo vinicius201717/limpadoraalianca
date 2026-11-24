@@ -20,6 +20,7 @@ import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import DoneAllRoundedIcon from "@mui/icons-material/DoneAllRounded";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import { FieldReceiptsBoard } from "./FieldReceiptsBoard";
+import { FieldNotifications } from "./FieldNotifications";
 import type { WorkHistoryEntry, WorkReport } from "@/lib/whatsapp-types";
 
 type Order = { id: string; title: string; status: string; customer?: string };
@@ -246,7 +247,8 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       textAttempt.current=null;
       setDraft("");
       if (r.operation) handleVoiceUi(r.operation);
-      if (r.operation) setNotice(r.operation.status === "executed" ? r.operation.message
+      if (r.entry.checklistReply) setNotice("");
+      else if (r.operation) setNotice(r.operation.status === "executed" ? r.operation.message
         : r.operation.status === "pending" ? "Ação pendente: " + r.operation.message : "Relato salvo no diário.");
     } catch (e) { setError(e instanceof Error ? e.message : "Falha ao registrar texto."); }
     finally { setBusy(false); }
@@ -283,7 +285,8 @@ export function FieldAssistantView({ userName }: { userName: string }) {
         ...state, entries: state.entries.some((e) => e.id === result.entry!.id) ? state.entries : [...state.entries, result.entry!],
       }));
       if (result.operation) handleVoiceUi(result.operation);
-      if (result.operation) setNotice(result.operation.status === "executed"
+      if (result.entry?.checklistReply) setNotice("");
+      else if (result.operation) setNotice(result.operation.status === "executed"
         ? result.operation.message : result.operation.status === "pending"
           ? "Pendente: " + result.operation.message : "Gravação registrada no diário.");
     } catch (error) {
@@ -506,6 +509,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
             {recording ? "Gravando mensagem de voz..." : finalizing ? "Organizando registro..." : userName + " · registro operacional"}
           </Typography>
         </Box>
+        {!!data.user.id && <FieldNotifications key={data.user.id} userId={data.user.id} color={colors.text} onChoose={id=>{if(data.orders.some(o=>o.id===id)&&orderRef.current!==id)chooseOrder(id);}}/>}
         {canStaff && <IconButton size="small" onClick={() => void openStaff()} title="Ocorrências da equipe" aria-label="Ver faltas e saídas antecipadas"
           sx={{ color: colors.text }}><PeopleAltRoundedIcon /></IconButton>}
         {canFinance && <IconButton size="small" onClick={() => void openFinance()} aria-label="Ver comprovantes do financeiro"
@@ -582,7 +586,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
           const own = entry.userId === data.user.id;
           const senderRight = own;
           const extra = /Ação executada:|Pendente, sem alteração automática:/.test(entry.content);
-          return <Box key={entry.id} sx={{
+          return <Box key={entry.id} sx={{ display:"contents" }}><Box sx={{
             alignSelf: senderRight ? "flex-end" : "flex-start",
             maxWidth: "min(92%, 650px)", minWidth: 110, width: "fit-content",
             bgcolor: senderRight ? colors.bubble : colors.incoming,
@@ -596,7 +600,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
               <Typography sx={{ fontSize: 11, color: colors.muted }}>Áudio transcrito</Typography>
             </Stack>}
             <Typography sx={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap", color: colors.text }}>
-              {entry.content}
+              {entry.assistantReply ? (entry.transcript || (entry.title.includes("áudio") ? "Mensagem de voz" : "Solicitação registrada")) : entry.content}
             </Typography>
             {entry.attachment && <Button
               href={entry.attachment.storagePath.startsWith("campo/") ? `/api/campo/midia/${entry.attachment.id}` : `/api/whatsapp/media/${entry.attachment.id}`}
@@ -605,13 +609,13 @@ export function FieldAssistantView({ userName }: { userName: string }) {
               Abrir anexo
             </Button>}
             <Stack direction="row" justifyContent="flex-end" alignItems="center" gap={0.5} sx={{ pt: 0.4 }}>
-              {extra && <Chip size="small" label="Ação registrada" sx={{ color: colors.accent, height: 19, fontSize: 9, bgcolor: colors.input }} />}
+              {extra && !entry.assistantReply && <Chip size="small" label="Ação registrada" sx={{ color: colors.accent, height: 19, fontSize: 9, bgcolor: colors.input }} />}
               <Typography sx={{ fontSize: 10, color: colors.muted }}>
                 {new Date(entry.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
               </Typography>
               {senderRight && <DoneAllRoundedIcon sx={{ fontSize: 14, color: colors.accent }} />}
             </Stack>
-          </Box>;
+          </Box>{entry.assistantReply && <Box sx={{alignSelf:"flex-start",maxWidth:"min(94%,760px)",width:"fit-content",bgcolor:colors.incoming,borderRadius:"12px 12px 12px 3px",px:1.6,py:1.3,color:colors.text}}><Typography fontSize={11} color={colors.accent} fontWeight={850}>Assistente Aliança</Typography><Typography sx={{whiteSpace:"pre-wrap",fontSize:13.5,my:.5}}>{entry.assistantReply}</Typography>{entry.checklistReply&&<Stack gap={.7}><Typography fontWeight={800}>{entry.checklistReply.orderTitle}</Typography><Typography variant="caption" color={colors.muted}>{entry.checklistReply.done} de {entry.checklistReply.total} itens ativos concluídos · {entry.checklistReply.pendingOnly?"Somente pendências":"Checklist completo"}</Typography>{entry.checklistReply.items.map(i=><Box key={i.id} sx={{p:1,borderRadius:1.5,bgcolor:colors.input}}><Typography fontWeight={750} fontSize={13}>{i.status==="DONE"?"✓":i.status==="BLOCKED"?"⚠":"○"} {i.title}</Typography><Typography sx={{fontSize:11,color:colors.muted}}>{({DONE:"Concluído",PENDING:"Pendente",IN_PROGRESS:"Em andamento",BLOCKED:"Bloqueado",REOPENED:"Reaberto",CANCELED:"Cancelado"} as Record<string,string>)[i.status]||i.status} · {i.responsible.join(", ")||"Sem responsável"}</Typography>{i.blockedReason&&<Typography sx={{fontSize:12}}>Motivo: {i.blockedReason}</Typography>}</Box>)}</Stack>}</Box>}</Box>;
         })}
         {data.reports.slice(-1).map((report) => <Box key={report.id} sx={{
           alignSelf: "flex-start", maxWidth: "min(94%, 760px)", bgcolor: colors.incoming,

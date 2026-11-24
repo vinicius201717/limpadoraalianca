@@ -266,6 +266,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
   }, [router, user?.id, visibleMenuHrefs]);
 
   async function handleLogout() {
+    try { const reg=await navigator.serviceWorker?.getRegistration("/campo"); const sub=await reg?.pushManager?.getSubscription(); if(sub){await fetch("/api/campo/notificacoes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"unsubscribe",endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe();} } catch { /* logout must still succeed */ }
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
   }

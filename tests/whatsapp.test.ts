@@ -906,3 +906,81 @@ test("a model-proposed settlement cannot bypass explicit confirmation or a chang
   assert.equal(stale.operation.status,"pending");
   await assistantTransaction(()=>assert.equal(db.servicePayments[0].receipts.length,0));
 });
+
+
+test("field checklist consultation is read-only, scoped to the assigned work and understands colloquial Portuguese without AI", async () => {
+  const now = new Date().toISOString();
+  await assistantTransaction(()=>{
+    const make=(id:string,serviceOrderId:string,title:string,status:import("../src/lib/types").ChecklistItemStatus,sortOrder:number)=>({id,serviceOrderId,title,description:"",sortOrder,status,isRequired:true,requiresPhoto:false,minimumPhotos:0,assignedEmployeeIds:["worker"],createdByUserId:owner.id,createdAt:now,updatedAt:now});
+    db.serviceOrderChecklistItems.push(make("p","a","Limpar vidros","PENDING",2),make("d","a","Limpar piso","DONE",1),make("b","a","Área externa","BLOCKED",3),make("c","a","Cancelado","CANCELED",4),make("x","b","Obra alheia","PENDING",0));
+  });
+  const ask=async(text:string,nonce:string)=>{
+    let result!:Awaited<ReturnType<typeof processFieldStatement>>;
+    await runWithStore(async()=>{await ensureDatabaseReady();result=await processFieldStatement({user:supervisor,orderId:"a",nonce,text});return Response.json({ok:true});});return result;
+  };
+  const full=await ask("Me manda o checklist completo","checklist-full-001");
+  assert.deepEqual(full.entry.checklistReply?.items.map(i=>i.id),["d","p","b","c"]);
+  assert.equal(full.entry.checklistReply?.done,1);
+  assert.equal(full.entry.checklistReply?.total,3);
+  const pending=await ask("E o que tá faltando?","checklist-pend-001");
+  assert.deepEqual(pending.entry.checklistReply?.items.map(i=>i.id),["p","b"]);
+  assert.deepEqual(pending.entry.checklistReply?.items[0].responsible,["Carlos"]);
+  assert.equal(aiCalls,0);
+  const audio=await runFieldCommand(supervisor,"a","checklist-voice-001",fieldCommand({action:"LIST_PENDING_CHECKLIST"}),"Fala aí quais os trem que faltam");
+  assert.equal(audio.entry.checklistReply?.items.length,2);
+  await assistantTransaction(()=>assert.equal(db.serviceOrderChecklistItems.length,5));
+  await assert.rejects(runFieldCommand(supervisor,"b","checklist-other-001",fieldCommand({action:"LIST_CHECKLIST"})));
+});
+
+test("operational notices follow Sao Paulo work schedule, are isolated to assigned supervisors and do not repeat read IDs", async () => {
+  const {fieldNotices,unreadFieldNotices,isAllowedPushEndpoint}=await import("../src/lib/field-notifications");
+  const when=new Date("2026-12-02T15:05:00Z");
+  await assistantTransaction(()=>{
+    const notices=fieldNotices(supervisor,when);
+    assert.equal(notices.length,2);
+    assert.ok(notices.every(n=>n.orderId==="a"));
+    assert.ok(notices.some(n=>n.kind==="ORGANIZATION"));
+    assert.equal(fieldNotices(supervisor,new Date("2026-11-30T15:05:00Z")).length,0);
+    assert.equal(fieldNotices(supervisor,new Date("2026-12-01T15:05:00Z")).length,2);
+    db.fieldNoticeReads.push({id:notices[0].id,userId:supervisor.id,at:when.toISOString()});
+    assert.equal(unreadFieldNotices(supervisor,when).filter(n=>!n.read).length,1);
+    db.serviceOrders.find(o=>o.id==="a")!.status="DONE";
+    assert.equal(fieldNotices(supervisor,when).length,0);
+    assert.equal(fieldNotices(collaborator,when).length,0);
+  });
+  assert.ok(isAllowedPushEndpoint("https://fcm.googleapis.com/fcm/send/abc"));
+  assert.ok(isAllowedPushEndpoint("https://web.push.apple.com/Qabc"));
+  assert.equal(isAllowedPushEndpoint("https://127.0.0.1/secret"),false);
+  assert.equal(isAllowedPushEndpoint("https://fcm.googleapis.com.evil.test/abc"),false);
+  const {GET}=await import("../src/app/api/campo/notificacoes/route");
+  assert.equal((await GET(request("/api/campo/notificacoes",collaborator),undefined)).status,403);
+  assert.equal((await GET(request("/api/campo/notificacoes",supervisor),undefined)).status,200);
+  const {GET:cron}=await import("../src/app/api/cron/campo-notificacoes/route");
+  assert.equal((await cron(new Request("http://localhost/api/cron/campo-notificacoes"))).status,401);
+});
+
+
+test("cron sends only authorized recent notifications and does not send them twice",async ()=>{
+  const {generateVAPIDKeys}=await import("web-push");
+  const {dispatchFieldPush}=await import("../src/lib/field-push-dispatch");
+  const envKeys=["CRON_SECRET","FIELD_VAPID_PUBLIC_KEY","FIELD_VAPID_PRIVATE_KEY","FIELD_VAPID_SUBJECT"] as const;
+  const previous=envKeys.map(k=>process.env[k]);
+  const keys=generateVAPIDKeys();
+  Object.assign(process.env,{CRON_SECRET:"isolated-test-secret",FIELD_VAPID_PUBLIC_KEY:keys.publicKey,FIELD_VAPID_PRIVATE_KEY:keys.privateKey,FIELD_VAPID_SUBJECT:"mailto:test@example.test"});
+  const sent:string[]=[];
+  const send=async (_subscription:unknown,payload?:string|Buffer|null)=>{sent.push(String(payload));return {statusCode:201,headers:{},body:""};};
+  try{
+    await assistantTransaction(()=>{
+      const now=new Date().toISOString();
+      db.fieldReceipts.push({id:"test-notice",serviceOrderId:"a",uploadedByUserId:supervisor.id,uploadedByName:supervisor.name,description:"TESTE",attachment:receipt,sourceMessageId:"fixture",status:"SETTLED",createdAt:now,updatedAt:now});
+      db.fieldPushSubscriptions.push({id:"device1",userId:supervisor.id,sessionVersion:0,endpoint:"https://fcm.googleapis.com/fcm/send/test",keys:{p256dh:"test",auth:"test"},updatedAt:now},{id:"device2",userId:collaborator.id,sessionVersion:0,endpoint:"https://fcm.googleapis.com/fcm/send/other",keys:{p256dh:"test",auth:"test"},updatedAt:now});
+    });
+    const dispatch=()=>dispatchFieldPush({publicKey:keys.publicKey,privateKey:keys.privateKey,subject:"mailto:test@example.test"},send);
+    assert.equal((await dispatch()).sent,1);
+    assert.equal(sent.length,1);
+    assert.match(JSON.parse(sent[0]).body,/financeira/);
+    assert.ok(!sent[0].includes("TESTE"));
+    assert.equal((await dispatch()).sent,0);assert.equal(sent.length,1);
+    await assistantTransaction(()=>assert.equal(db.fieldPushDeliveries.filter(d=>d.state==="SENT").length,1));
+  }finally{envKeys.forEach((k,i)=>{if(previous[i]===undefined)delete process.env[k];else process.env[k]=previous[i]});}
+});

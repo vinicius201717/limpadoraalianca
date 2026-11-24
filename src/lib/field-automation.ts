@@ -16,7 +16,7 @@ import type { AssistantAttachment, WorkHistoryEntry } from "./whatsapp-types";
 import type { Material, ServiceOrder, ServiceOrderEquipment, ServiceOrderMaterial, SessionUser } from "./types";
 
 type UiDirective = { kind: "THEME" | "ORDER" | "REPORT"; value: string };
-type Outcome = { message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string; ui?: UiDirective };
+type Outcome = { checklist?: WorkHistoryEntry["checklistReply"]; message: string; entityId?: string; stockChange?: boolean; targetOrderId?: string; ui?: UiDirective };
 const rounded = (n: number) => Math.round(n * 1e6) / 1e6;
 const comparable = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
 const operational = (role: string) => ["OWNER", "GERENTE", "SUPERVISOR_OBRA", "ALMOXARIFADO"].includes(role);
@@ -129,10 +129,31 @@ export function fieldSpeechContext(user: SessionUser, orderId: string) {
 }
 
 
+export function checklistReadIntent(text: string): FieldAction | undefined {
+  const s = comparable(text).replace(/[?!.,]/g, "");
+  // Only unambiguous, read-only requests bypass the model. Never infer a write.
+  if (/\b(conclua|finalize|marque|cancele|apague|crie|atribua|bloqueie|terminei|conclui)\b/.test(s)) return;
+  if (/^(?:(?:e|ai|chat) )*(?:(?:me )?(?:fala|fale|diz|diga|manda|mande|mostra|mostre|passa|passe) )?(?:so |apenas )?(?:o que|oq|que|quais itens|quais tarefas) (?:ainda )?(?:ta |esta |estao )?(?:faltando|falta|faltam|pendente|pendentes|resta|restam)(?: ainda| ai| na obra| do checklist| pra terminar| pra fazer| hoje)?$/.test(s) || /^(?:(?:me )?(?:manda|mostra|passa|quero ver) )?(?:o |os |as )?(?:checklist|check list|check|itens|tarefas) (?:pendente[s]?|em aberto|que faltam|que ainda faltam)(?: da obra| ai)?$/.test(s)) return {...diaryAction(),action:"LIST_PENDING_CHECKLIST"};
+  if (/^(?:me |ai |chat )*(?:o que|oq|que|quais itens|quais tarefas) (?:ainda )?(?:falta[m]?|faltou|resta[m]?|esta[m]? pendente[s]?|tem pra fazer)(?: na obra| do checklist| ai| hoje)?$/.test(s) || /^(?:me )?(?:manda|mande|mostra|mostre|passa|passe|lista|liste|quero ver) (?:so |apenas )?(?:os |as |o )?(?:itens|tarefas|checklist|check|o que)? ?(?:que )?(?:ainda )?(?:falta[m]?|pendentes|em aberto|resta[m]?)(?: da obra| ai)?$/.test(s)) return {...diaryAction(),action:"LIST_PENDING_CHECKLIST"};
+  if (/^(?:(?:me )?(?:manda|mande|mostra|mostre|passa|passe|lista|liste|envia|envie|quero ver|quero receber|qual e) )?(?:o |a |as |meu |minhas )?(?:checklist|check list|check|tarefas)(?: completo| completa| completo da obra| da obra| inteiro| todas| ai)?$/.test(s)) return {...diaryAction(),action:"LIST_CHECKLIST"};
+}
 function executeFieldOperation(user: SessionUser, currentOrder: string, action: FieldAction, source: string): Outcome {
   if (action.action === "DIARY") return { message: "Relato salvo no diário." };
   if (action.action === "CLARIFY" || action.confidence !== "HIGH")
     throw new FieldError(action.question.trim() || "Dê mais detalhes para executar a ação com segurança.");
+  if (action.action === "LIST_CHECKLIST" || action.action === "LIST_PENDING_CHECKLIST") {
+    if (["office","warehouse"].includes(currentOrder) || !operational(user.role)) throw new FieldError("Selecione uma obra autorizada para consultar o checklist.");
+    authorizeFieldContext(user,currentOrder);
+    authorizeServiceOrderAccess(user,currentOrder,"read");
+    const order=db.serviceOrders.find(o=>o.id===currentOrder)!;
+    const all=db.serviceOrderChecklistItems.filter(i=>i.serviceOrderId===currentOrder).sort((a,b)=>a.sortOrder-b.sortOrder || a.id.localeCompare(b.id));
+    const active=all.filter(i=>i.status!=="CANCELED");
+    const pendingOnly=action.action==="LIST_PENDING_CHECKLIST";
+    const employees=new Map(db.employees.map(e=>[e.id,e.name]));
+    const items=(pendingOnly?active.filter(i=>i.status!=="DONE"):all).map(i=>({id:i.id,title:i.title,status:i.status,responsible:[...new Set([...(i.assignedEmployeeIds||[]),...(i.assignedEmployeeId?[i.assignedEmployeeId]:[])])].map(id=>employees.get(id)||"Responsável não identificado"),blockedReason:i.blockedReason}));
+    const done=active.filter(i=>i.status==="DONE").length;
+    return {message:pendingOnly?(items.length?"Aqui estão os itens que ainda faltam.":"Não há itens pendentes nesta obra."):"Aqui está o checklist completo da obra.",checklist:{orderTitle:order.title,pendingOnly,total:active.length,done,items}};
+  }
   if (action.action === "LIST_FINANCIAL_RECEIPTS" || action.action === "SETTLE_RECEIPT") {
     if (!canViewServiceOrderFinancials(user)) throw new FieldError("Sem permissao financeira.");
     const pending = pendingFinancialReceipts(user, currentOrder);
@@ -403,13 +424,14 @@ export async function processFieldStatement(input: {
   const anyEntry = [...db.workHistory, ...db.warehouseJournal, ...db.officeJournal].find((e) => e.messageId === source);
   if (anyEntry) {
     if (anyEntry.serviceOrderId !== orderId) throw new FieldError("Este envio já pertence a outra obra.");
-    return { entry: anyEntry, operation: { status: "diary", message: "Este relato já estava salvo. Nenhuma ação duplicada." } };
+    return { entry: anyEntry, operation: { status: "diary", message: anyEntry.assistantReply || "Este relato já estava salvo. Nenhuma ação duplicada." } };
   }
-  const context = fieldSpeechContext(user, orderId);
+  const readOnly = input.modelOverride ? undefined : checklistReadIntent(text);
+  const context = readOnly ? null : fieldSpeechContext(user, orderId);
   let action = diaryAction();
   let advisory = "";
   try {
-    action = fieldActionSchema.parse(input.modelOverride ?? await interpretFieldCommand(text, context));
+    action = fieldActionSchema.parse(input.modelOverride ?? readOnly ?? await interpretFieldCommand(text, context));
   } catch {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
   }
@@ -417,9 +439,9 @@ export async function processFieldStatement(input: {
   const shortConfirmation = /^(confirmo|confirmado|sim|ok|pode|autorizo|aprovado|aprovo)[.! ]*$/i.test(text.trim());
   let previewReceiptId: string | null = null;
   if (action.action === "SETTLE_RECEIPT") {
-    if (shortConfirmation && context.confirmationReceiptId !== action.receiptId) {
+    if (shortConfirmation && context?.confirmationReceiptId !== action.receiptId) {
       action = { ...diaryAction(), action: "CLARIFY", question: "Consulte os comprovantes pendentes primeiro e confirme o documento apresentado." };
-    } else if (!affirmative || context.confirmationReceiptId !== action.receiptId) {
+    } else if (!affirmative || context?.confirmationReceiptId !== action.receiptId) {
       const selected = pendingFinancialReceipts(user, orderId).find(r=>r.id===action.receiptId);
       if (selected && action.confidence === "HIGH" && selected.digital?.amount && !shortConfirmation) {
         previewReceiptId = selected.id;
@@ -461,6 +483,8 @@ export async function processFieldStatement(input: {
     title: financialAction ? (action.action === "LIST_FINANCIAL_RECEIPTS" ? "Consulta financeira" : "Baixa financeira") : status === "executed" ? "Registro e operação de campo" : status === "pending" ? "Relato pendente de esclarecimento" : "Relato de campo",
     content, transcript: input.summaryOnly ? "" : text, attachment,
   });
+  entry.assistantReply=outcome.message;
+  if (outcome.checklist) entry.checklistReply=outcome.checklist;
   if (financialAction) {
     entry.kind = "FINANCIAL";
     const pending = pendingFinancialReceipts(currentUser, orderId);

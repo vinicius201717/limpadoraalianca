@@ -37,6 +37,8 @@ export type WorkHistoryEntry = {
   title: string; content: string; transcript: string; messageId: string;
   attachment?: AssistantAttachment; recordingSessionId?: string; createdAt: string;
   receiptConfirmation?: { id: string; updatedAt: string; amount: number; sessionVersion: number };
+  assistantReply?: string;
+  checklistReply?: { orderTitle: string; pendingOnly: boolean; total: number; done: number; items: Array<{id:string;title:string;status:string;responsible:string[];blockedReason?:string}> };
 };
 export type EmployeeWarning = {
   id: string; serviceOrderId: string; employeeId: string; employeeName: string;
