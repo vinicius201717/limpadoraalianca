@@ -2,11 +2,16 @@ import {z} from "zod";
 export const reportKinds=["services","supervisors","employees","managers","materials"] as const;
 export type ReportKind=typeof reportKinds[number];
 export const reportLabels:Record<ReportKind,string>={services:"Serviços",supervisors:"Supervisores",employees:"Colaboradores",managers:"Gerentes",materials:"Materiais e almoxarifado"};
-export const reportQuerySchema=z.object({kind:z.enum(reportKinds).default("services"),period:z.enum(["all","today","7","30","month"]).default("30"),subject:z.string().trim().max(160).default("")});
+export const reportQuerySchema=z.object({kind:z.enum(reportKinds).default("services"),period:z.enum(["all","today","7","30","month"]).default("30"),subject:z.string().trim().max(160).default(""),mode:z.enum(["ai"]).optional()});
 export type ReportQuery=z.infer<typeof reportQuerySchema>;
-export type ManagementReport={title:string;generatedAt:string;periodLabel:string;note:string;metrics:{label:string;value:string}[];columns:string[];rows:{id:string;cells:string[]}[];matched:number;summary:string};
+export type ManagementReport={title:string;generatedAt:string;periodLabel:string;note:string;metrics:{label:string;value:string}[];columns:string[];rows:{id:string;cells:string[]}[];matched:number;summary:string;charts?:{title:string;values:{label:string;value:number}[]}[]};
 export const normalizeReportText=(s:string)=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim().replace(/\s+/g," ");
 export function parseManagementReportRequest(text:string,currentOrderTitle?:string):ReportQuery|undefined{
+ const isAI=/\b(?:com ia|pela ia|por ia|analitico|analitica|inteligencia artificial)\b/.test(normalizeReportText(text));
+ const clean=normalizeReportText(text).replace(/\b(?:com ia|pela ia|por ia|analitico|analitica|inteligencia artificial)\b/g,"").replace(/\s+/g," ").trim();
+ const result=parseBaseReportRequest(clean,currentOrderTitle);return result&&isAI?{...result,mode:"ai"}:result;
+}
+function parseBaseReportRequest(text:string,currentOrderTitle?:string):ReportQuery|undefined{
  const s=normalizeReportText(text).replace(/[?!.,;]+$/g,"").trim();
  const m=/^(?:(?:chat|assistente)[, ]+)?(?:(?:me )?(?:da|de|manda|mande|mostra|mostre|passa|passe|envia|envie|gere|gera|faz|faca|quero ver|quero|abra|abre|consulta|consulte|preciso de) (?:um |o |os |de )?)?relatorios?(?: gerenciais?| completo[s]?)?(?: (.*))?$/.exec(s);
  if(!m)return;
@@ -22,3 +27,17 @@ export function parseManagementReportRequest(text:string,currentOrderTitle?:stri
  if(!rest)return {kind:"services",period,subject:""};
  return;
 }
+
+export type ReportSource={id:string;fields:Record<string,string|number|boolean|null>};
+export type ReportSection={key:string;label:string;basis:string;total:number;rows:ReportSource[]};
+export type ReportSectionInfo=Omit<ReportSection,"rows">;
+export const reportAnalysisSchema=z.object({
+ executiveSummary:z.string().min(1).max(3500),
+ findings:z.array(z.object({title:z.string().max(180),severity:z.enum(["CRITICAL","HIGH","MEDIUM","LOW","INFO"]),analysis:z.string().max(1400),evidence:z.array(z.string().max(250)).min(1).max(8)})).max(12),
+ recommendations:z.array(z.object({action:z.string().max(700),priority:z.enum(["HIGH","MEDIUM","LOW"]),responsibleRole:z.string().max(100),suggestedDeadline:z.string().max(100),evidence:z.array(z.string().max(250)).min(1).max(8)})).max(10),
+ dataGaps:z.array(z.string().max(500)).max(10),
+ conclusion:z.string().max(1500),
+});
+export type ReportAnalysis=z.infer<typeof reportAnalysisSchema>;
+export type AnalysisEvidence={id:string;label:string;detail:string};
+export type SavedManagementAnalysis={id:string;userId:string;scope:string;query:ReportQuery;title:string;periodLabel:string;generatedAt:string;model:string;analysis:ReportAnalysis;coverage:{section:string;total:number;included:number}[];limitations:string[];evidence:AnalysisEvidence[]};

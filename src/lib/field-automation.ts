@@ -205,7 +205,7 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
     if(!["OWNER","GERENTE"].includes(user.role))throw new FieldError("Relatórios gerenciais são exclusivos do dono e do gerente.");
     let parsed;try{parsed=reportQuerySchema.safeParse(JSON.parse(action.details));}catch{throw new FieldError("Informe qual categoria de relatório deseja consultar.");}
     if(!parsed.success)throw new FieldError("Filtros de relatório inválidos.");
-    return {message:"Relatório de "+reportLabels[parsed.data.kind].toLowerCase()+" disponível em consulta privada.",ui:{kind:"MANAGEMENT_REPORT",value:JSON.stringify(parsed.data)}};
+    return {message:"Relatório de "+reportLabels[parsed.data.kind].toLowerCase()+(parsed.data.mode==="ai"?" com análise da IA":"")+" disponível em consulta privada.",ui:{kind:"MANAGEMENT_REPORT",value:JSON.stringify(parsed.data)}};
   }
   if (action.action === "REQUEST_REPORT") {
     if(!["OWNER","GERENTE"].includes(user.role))throw new FieldError("Relatórios são exclusivos do dono e do gerente.");
@@ -471,6 +471,13 @@ export async function processFieldStatement(input: {
     action = fieldActionSchema.parse(chargeConfirm ? {...diaryAction(),action:"CREATE_CHARGE"} : input.modelOverride ?? readOnly ?? await interpretFieldCommand(text, context));
   } catch {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
+  }
+  // Only an explicit analytical/AI request may start a billable report automatically.
+  if(action.action==="REQUEST_MANAGEMENT_REPORT"){
+    try{
+      const q=reportQuerySchema.parse(JSON.parse(action.details));
+      if(q.mode==="ai"&&(!/\b(ia|inteligencia artificial|analitico|analitica|analise|analisa|analise-me)\b/.test(comparable(text))||/\b(nao|sem)\s+(?:usar |use |com )?(?:a )?ia\b/.test(comparable(text)))){delete q.mode;action={...action,details:JSON.stringify(q)};}
+    }catch{/* execution validates the query again */}
   }
   const affirmative = /^(?:sim[, ]+)?(?:confirmo|confirmado|autorizo|aprovo|aprovado|pode(?: dar baixa)?|dar baixa|confirmo[, ]+pode dar baixa|sim|ok)[.! ]*$/i.test(text.trim());
   const shortConfirmation = /^(confirmo|confirmado|sim|ok|pode|autorizo|aprovado|aprovo)[.! ]*$/i.test(text.trim());
