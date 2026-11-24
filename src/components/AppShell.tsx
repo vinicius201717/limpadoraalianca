@@ -199,7 +199,7 @@ function Sidebar({
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const publicPaths = ["/", "/login", "/acompanhe-servico"];
+  const publicPaths = ["/", "/login", "/acompanhe-servico", "/politica-de-privacidade", "/exclusao-de-dados"];
 
   if (publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
     return <>{children}</>;

@@ -2315,6 +2315,8 @@ export function PublicSiteView({
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Chip label="Segunda a sexta, 8h às 18h" sx={{ color: "white", borderColor: "rgba(255,255,255,.28)" }} variant="outlined" />
               <Chip label="Sábado, 8h às 13h" sx={{ color: "white", borderColor: "rgba(255,255,255,.28)" }} variant="outlined" />
+              <Box component="a" href="/politica-de-privacidade" sx={{ color: "white", textDecoration: "underline", alignSelf: "center", fontSize: 14 }}>Política de Privacidade</Box>
+              <Box component="a" href="/exclusao-de-dados" sx={{ color: "white", textDecoration: "underline", alignSelf: "center", fontSize: 14 }}>Exclusão de dados</Box>
             </Stack>
           </Stack>
         </Container>
