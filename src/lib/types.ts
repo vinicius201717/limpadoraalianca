@@ -411,6 +411,7 @@ export type ServiceOrder = {
 
 export type ServiceExpense = {
   id: string;
+  requestId?: string;
   serviceOrderId: string;
   employeeId: string;
   employeeName: string;

@@ -54,6 +54,7 @@ export const POST = withDatabase(async (request) => {
       id: randomUUID(), serviceOrderId: ["warehouse", "office"].includes(claim.orderId) ? null : claim.orderId,
       uploadedByUserId: auth.user.id, uploadedByName: auth.user.name,
       description: input.description.trim() || digital?.merchant || "Comprovante enviado sem descricao", attachment: fieldAttachment(claim), digital, fileHash,
+      extraction: { status: digital ? "READY" as const : "FAILED" as const, attempts: 1, attemptedAt: now },
       sourceMessageId: source, status: "PENDING_REVIEW" as const, createdAt: now, updatedAt: now,
     };
     db.fieldReceipts.push(receipt);

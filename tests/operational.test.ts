@@ -228,3 +228,71 @@ test("a manager cannot grant financial access when creating a supervisor", async
   assert.equal(response.status, 403);
   assert.equal((state().users as SystemUser[]).length, 3);
 });
+
+
+test("repeated financial receipt is rejected across installments and reversal updates associated digital document", async () => {
+  const { POST } = await import("../src/app/api/finance/payments/route");
+  const pay = async (description: string) => {
+    const r = await POST(request("/api/finance/payments","POST",{action:"create",serviceOrderId:"order",description,amount:50,dueAt:"2026-12-01"}),undefined);
+    assert.equal(r.status,201); return (await r.json()).payment.id;
+  };
+  const a = await pay("First installment"), b = await pay("Second installment");
+  const input = { action:"receive",paymentId:a,amount:20,paidAt:"2026-01-01",method:"PIX",reference:"TEST-REF" };
+  const first = await POST(request("/api/finance/payments","POST",input),undefined);
+  assert.equal(first.status,201);
+  const receiptId = (await first.json()).payment.receipts[0].id;
+  assert.equal((await POST(request("/api/finance/payments","POST",{...input,paymentId:b,reference:"test-ref"}),undefined)).status,409);
+  const docId = "11111111-1111-4111-8111-111111111111";
+  state().fieldReceipts = [{id:docId,status:"SETTLED",serviceOrderId:"order",settlement:{ledgerId:receiptId,direction:"RECEIPT",amount:20,byUserId:owner.id,byName:owner.name,at:"2026-01-01"}}];
+  state().financialDocuments = [{id:docId,direction:"PAYMENT",amount:20}];
+  const reverse = await POST(request("/api/finance/payments","POST",{action:"reverse",paymentId:a,receiptId,reason:"Duplicidade confirmada"}),undefined);
+  assert.equal(reverse.status,201);
+  assert.equal((state().fieldReceipts as Array<{status:string}>)[0].status,"REVERSED");
+  assert.equal((state().financialDocuments as Array<{direction:string}>)[0].direction,"ARCHIVE");
+});
+
+test("stock cannot be wiped; archiving preserves historical allocations and hides financial cost from warehouse", async () => {
+  const { GET, PATCH, DELETE } = await import("../src/app/api/stock/materials/route");
+  const warehouse: SystemUser = {...owner,id:"warehouse",role:"ALMOXARIFADO",email:"warehouse@example.test"};
+  (state().users as SystemUser[]).push(warehouse);
+  const get = await GET(request("/api/stock/materials","GET",undefined,warehouse),undefined);
+  assert.equal(get.status,200); assert.equal((await get.json()).materials[0].unitCost,0);
+  const patch = await PATCH(request("/api/stock/materials","PATCH",{id:"material",unitCost:999},warehouse),undefined);
+  assert.equal(patch.status,200); assert.equal((state().materials as Material[])[0].unitCost,5);
+  const bulk = await DELETE(request("/api/stock/materials","DELETE",{},warehouse),undefined);
+  assert.equal(bulk.status,400); assert.equal((state().materials as Material[]).length,1);
+  state().serviceOrderMaterials=[{id:"historic",materialId:"material",serviceOrderId:"order",status:"CONSUMED"}];
+  const single = await DELETE(request("/api/stock/materials","DELETE",{id:"material"},warehouse),undefined);
+  assert.equal(single.status,200); assert.ok((state().materials as Material[])[0].archivedAt);
+  assert.equal((state().serviceOrderMaterials as unknown[]).length,1);
+});
+
+test("financial adjustment requires reason and persists reconciled ledger with reason", async () => {
+  const { PATCH } = await import("../src/app/api/service-orders/[id]/financials/route");
+  const context={params:Promise.resolve({id:"order"})};
+  assert.equal((await PATCH(request("/api/service-orders/order/financials","PATCH",{revenue:100,expenses:25}),context)).status,400);
+  const good=await PATCH(request("/api/service-orders/order/financials","PATCH",{revenue:100,expenses:25,reason:"Ajuste documentado"}),context);
+  assert.equal(good.status,200); assert.equal((await good.json()).serviceOrder.expenses,25);
+});
+
+
+test("same installment request identifier returns original record; divergent payload is rejected", async () => {
+  const { POST } = await import("../src/app/api/finance/payments/route");
+  const input={action:"create",serviceOrderId:"order",description:"Parcela de teste",amount:30,dueAt:"2026-12-01",requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"};
+  const first=await POST(request("/api/finance/payments","POST",input),undefined);assert.equal(first.status,201);
+  const repeated=await POST(request("/api/finance/payments","POST",input),undefined);assert.equal(repeated.status,200);
+  assert.equal((await repeated.json()).payment.id,(await first.json()).payment.id);
+  assert.equal((await POST(request("/api/finance/payments","POST",{...input,amount:31}),undefined)).status,409);
+  assert.equal((state().servicePayments as unknown[]).length,1);
+});
+
+test("concurrent financial writes cannot both commit the same reference", async () => {
+  const {POST}=await import("../src/app/api/finance/payments/route");
+  const created=await POST(request("/api/finance/payments","POST",{action:"create",serviceOrderId:"order",description:"Parcela concorrente",amount:80,dueAt:"2026-12-01"}),undefined);
+  const paymentId=(await created.json()).payment.id;
+  const input={action:"receive",paymentId,amount:10,paidAt:"2026-01-01",method:"PIX",reference:"SAME-CONCURRENT-REF"};
+  const responses=await Promise.all(Array.from({length:25},()=>POST(request("/api/finance/payments","POST",input),undefined)));
+  assert.equal(responses.filter(r=>r.status===201).length,1);
+  assert.equal(responses.filter(r=>r.status===409).length,24);
+  assert.equal((state().servicePayments as Array<{receipts:unknown[]}>)[0].receipts.length,1);
+});

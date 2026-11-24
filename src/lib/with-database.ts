@@ -5,6 +5,7 @@ import { ConcurrentUpdateError, DatabaseUnavailableError } from "./app-state-db"
 import { runWithStore } from "./request-store";
 import { ensureDatabaseReady } from "./store";
 import { getCurrentUserFromRequest } from "./auth";
+import { AUTH_COOKIE, verifySessionPayload } from "./session-token";
 import { consumeRateLimit } from "./rate-limit";
 
 const MAX_BODY = 4 * 1024 * 1024;
@@ -39,6 +40,9 @@ export function withDatabase<C>(handler: (request: NextRequest, context: C) => P
         const retryAfter = await consumeRateLimit(scope, identity, scope === "login" ? 20 : scope === "media" ? 600 : 120, 15 * 60_000);
         if (retryAfter) return NextResponse.json({ message: "Muitas tentativas. Aguarde antes de tentar novamente." }, { status: 429, headers: { "Retry-After": String(retryAfter), "Cache-Control": "no-store" } });
       }
+      // Reject unauthenticated private calls before loading the entire operational snapshot.
+      if (!path.startsWith("/api/public/") && !path.startsWith("/api/auth/") && !path.startsWith("/api/whatsapp/") && path !== "/api/checklist-media" && !verifySessionPayload(request.cookies.get(AUTH_COOKIE)?.value))
+        return NextResponse.json({message:"Nao autenticado."},{status:401,headers:{"Cache-Control":"no-store","X-Request-Id":requestId}});
       const response = await runWithStore(async () => {
         if (path !== "/api/auth/logout") await ensureDatabaseReady();
         if (!path.startsWith("/api/public/") && !path.startsWith("/api/auth/") && path !== "/api/checklist-media") {

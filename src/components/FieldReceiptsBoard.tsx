@@ -12,6 +12,9 @@ const money = (amount: number) => amount.toLocaleString("pt-BR", { style: "curre
 
 export function FieldReceiptsBoard({ initial = [], compact = false }: { initial?: Row[]; compact?: boolean }) {
   const [rows, setRows] = useState(initial);
+  const [offset, setOffset] = useState(0);
+  const [counts, setCounts] = useState({ total: initial.length, pending: initial.length, administrativeTotal: 0 });
+  const [costCenter, setCostCenter] = useState<NonNullable<Row["costCenter"]>>("ADMINISTRACAO");
   const [targets, setTargets] = useState<Targets>({ expenses: [], payments: [] });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -22,23 +25,23 @@ export function FieldReceiptsBoard({ initial = [], compact = false }: { initial?
   const refresh = useCallback(async () => {
     setLoading("refresh"); setError("");
     try {
-      const response = await fetch("/api/finance/campo-comprovantes", { cache: "no-store" });
+      const response = await fetch("/api/finance/campo-comprovantes?offset=" + offset, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message);
-      setRows(data.receipts); setTargets({ expenses: data.expenses, payments: data.payments });
+      setRows(data.receipts); setCounts({ total: data.total, pending: data.pending, administrativeTotal: data.administrativeTotal }); setTargets({ expenses: data.expenses, payments: data.payments });
     } catch (e) { setError(e instanceof Error ? e.message : "Falha ao consultar comprovantes."); }
     finally { setLoading(""); }
-  }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
-  async function update(id: string, status: "CORRECT" | "SETTLED") {
+  }, [offset]);
+  useEffect(() => { const timer = setTimeout(() => void refresh(), 0); return () => clearTimeout(timer); }, [refresh]);
+  async function update(id: string, status: "CORRECT" | "SETTLED" | "RETRY_EXTRACTION") {
     setLoading(id); setError(""); setNotice("");
     try {
       const response = await fetch("/api/finance/campo-comprovantes", { method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status, ...(status === "CORRECT" ? { digital: { ...digital, confidence: "HIGH" } } : { targetId: selected[id] || undefined }) }) });
+        body: JSON.stringify({ id, status, expectedUpdatedAt: rows.find(r => r.id === id)?.updatedAt, ...(status === "CORRECT" ? { digital: { ...digital, confidence: "HIGH" }, costCenter } : { targetId: selected[id] || undefined }) }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message);
       setRows(prev => prev.map(row => row.id === id ? data : row));
-      setEditing(""); setNotice(status === "SETTLED" ? "Baixa registrada no financeiro." : "Dados revisados. Aguardando autorizacao de baixa.");
+      setEditing(""); setNotice(status === "SETTLED" ? "Baixa registrada no financeiro." : status === "RETRY_EXTRACTION" ? (data.extraction?.status === "READY" ? "Nova leitura concluida. Confira os dados." : "A leitura falhou novamente. Confira a integracao ou revise manualmente.") : "Dados revisados. Aguardando autorizacao de baixa.");
       await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : "Falha na operacao."); }
     finally { setLoading(""); }
@@ -46,9 +49,11 @@ export function FieldReceiptsBoard({ initial = [], compact = false }: { initial?
   return <Box sx={{ maxWidth: 1000, mx: "auto", p: compact ? 0 : { xs: 2, sm: 4 } }}>
     <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap" sx={{ mb: 2 }}>
       {!compact && <Typography variant="h4" fontWeight={850}>Comprovantes digitais</Typography>}
-      <Chip color="warning" label={rows.filter(r => r.status !== "SETTLED").length + " aguardando baixa"} />
+      <Chip color="warning" label={counts.pending + " aguardando baixa"} />
       <Button onClick={() => void refresh()} disabled={!!loading}>Atualizar</Button>
     </Stack>
+    <Typography variant="body2" sx={{ mb: 1 }}>Despesas administrativas registradas: {money(counts.administrativeTotal)}</Typography>
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}><Button disabled={offset === 0 || !!loading} onClick={() => setOffset(v => Math.max(0,v-50))}>Anterior</Button><Typography variant="caption">{counts.total ? offset+1 : 0}–{Math.min(offset+50,counts.total)} de {counts.total}</Typography><Button disabled={offset+50 >= counts.total || !!loading} onClick={() => setOffset(v=>v+50)}>Próxima</Button></Stack>
     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>A IA extrai os dados do arquivo. Confira antes de autorizar a baixa. O original fica no arquivo privado para auditoria.</Typography>
     {loading === "refresh" && <CircularProgress size={20}/>}
     {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -62,19 +67,22 @@ export function FieldReceiptsBoard({ initial = [], compact = false }: { initial?
         <Stack spacing={1.2}>
           <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">
             <Typography fontWeight={800} sx={{ overflowWrap: "anywhere" }}>{row.fileName}</Typography>
-            <Chip size="small" color={row.status === "SETTLED" ? "success" : "warning"} label={row.status === "SETTLED" ? "Baixado" : "Pendente de baixa"}/>
+            <Chip size="small" color={row.status === "SETTLED" ? "success" : "warning"} label={row.status === "SETTLED" ? "Baixado" : row.status === "REVERSED" ? "Estornado" : "Pendente de baixa"}/>
           </Stack>
           <Typography variant="caption">{row.uploadedByName} | {row.orderTitle || row.serviceOrderId || "Sem obra"} | {new Date(row.createdAt).toLocaleString("pt-BR")}</Typography>
           <Typography>{row.description}</Typography>
+          {row.costCenter && <Typography variant="caption">Centro de custo: {row.costCenter}</Typography>}
           {d ? <Box><Typography variant="h6">{d.amount === null ? "Valor a revisar" : money(d.amount)}</Typography>
             <Typography variant="body2">{d.merchant || "Favorecido nao identificado"} | {d.paidAt || "Data a revisar"} | {d.direction === "EXPENSE" ? "Despesa" : d.direction === "RECEIPT" ? "Recebimento" : "Tipo a revisar"} | {d.method || "Meio a revisar"}</Typography>
             <Typography variant="caption">Referencia: {d.reference || "Nao identificada"}</Typography>
             <Box component="details" sx={{ mt: 1 }}><summary>Transcricao digital</summary><Typography variant="body2" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{d.transcript || "Sem texto legivel"}</Typography></Box>
             {d.confidence === "LOW" && <Alert severity="warning">Leitura incerta. Revise os dados.</Alert>}
           </Box> : <Alert severity="warning">Leitura automatica indisponivel. Confira o original e preencha os dados.</Alert>}
+          {row.reversal && <Alert severity="warning">Estornado: {row.reversal.reason}</Alert>}
           {row.settlement && <Typography variant="body2">Baixado por {row.settlement.byName} em {new Date(row.settlement.at).toLocaleString("pt-BR")} | {money(row.settlement.amount)}</Typography>}
           <Button href={"/api/finance/campo-comprovantes/" + row.id} target="_blank" rel="noopener noreferrer">Consultar original</Button>
-          {row.status !== "SETTLED" && editing === row.id && <>
+          {["PENDING_REVIEW", "REVIEWED"].includes(row.status) && editing === row.id && <>
+            {!row.serviceOrderId && <TextField select label="Centro de custo" value={costCenter} onChange={e=>setCostCenter(e.target.value as NonNullable<Row["costCenter"]>)} SelectProps={{ MenuProps: { sx: { zIndex: 1900 } } }}>{["ADMINISTRACAO","TRANSPORTE","MANUTENCAO","ALUGUEL","OUTROS"].map(x=><MenuItem key={x} value={x}>{x}</MenuItem>)}</TextField>}
             <TextField label="Transcricao" multiline minRows={2} value={digital.transcript} onChange={e => setDigital(v => ({ ...v, transcript: e.target.value }))}/>
             <TextField label="Valor em reais" type="number" value={digital.amount ?? ""} onChange={e => setDigital(v => ({ ...v, amount: e.target.value ? Number(e.target.value) : null }))}/>
             <TextField label="Data do pagamento" type="date" InputLabelProps={{ shrink: true }} value={digital.paidAt || ""} onChange={e => setDigital(v => ({ ...v, paidAt: e.target.value || null }))}/>
@@ -92,12 +100,13 @@ export function FieldReceiptsBoard({ initial = [], compact = false }: { initial?
             <Button onClick={() => void update(row.id, "CORRECT")} disabled={!!loading}>Salvar dados conferidos</Button>
             <Button onClick={() => setEditing("")}>Cancelar</Button>
           </>}
-          {row.status !== "SETTLED" && editing !== row.id && <>
-            <Button onClick={() => { setDigital(d || empty()); setEditing(row.id); }}>Revisar dados digitais</Button>
+          {["PENDING_REVIEW", "REVIEWED"].includes(row.status) && editing !== row.id && <>
+            {(!d || d.confidence === "LOW") && <Button disabled={!!loading} onClick={()=>void update(row.id,"RETRY_EXTRACTION")}>Tentar leitura novamente</Button>}
+            <Button onClick={() => { setDigital(d || empty()); setCostCenter(row.costCenter || "ADMINISTRACAO"); setEditing(row.id); }}>Revisar dados digitais</Button>
             {!!options.length && <TextField select SelectProps={{ MenuProps: { sx: { zIndex: 1900 } } }} label="Vincular lancamento" value={selected[row.id] || ""} onChange={e => setSelected(v => ({ ...v, [row.id]: e.target.value }))}>
-              <MenuItem value="">Selecionar</MenuItem>{options.map(o => <MenuItem key={o.id} value={o.id}>{o.label}</MenuItem>)}
+              <MenuItem value="">Selecionar</MenuItem>{d?.direction === "EXPENSE" && <MenuItem value="NEW_EXPENSE">Nova despesa distinta (confirmo)</MenuItem>}{options.map(o => <MenuItem key={o.id} value={o.id}>{o.label}</MenuItem>)}
             </TextField>}
-            <Button variant="contained" color="success" disabled={!!loading || !d || d.confidence !== "HIGH" || !d.amount || !d.paidAt || d.direction === "UNKNOWN"}
+            <Button variant="contained" color="success" disabled={!!loading || !d || d.confidence !== "HIGH" || !d.amount || !d.paidAt || d.direction === "UNKNOWN" || (!row.serviceOrderId && (!row.costCenter || d.direction !== "EXPENSE"))}
               onClick={() => void update(row.id, "SETTLED")}>Dar baixa {d?.amount ? money(d.amount) : ""}</Button>
           </>}
         </Stack>

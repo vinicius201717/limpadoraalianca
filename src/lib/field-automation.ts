@@ -115,9 +115,10 @@ export function fieldSpeechContext(user: SessionUser, orderId: string) {
   const inventoryOrders = stockAllowed(user) ? db.serviceOrders.filter((o) => isOpenServiceOrderForTeam(o.status))
     .filter((o) => { try { authorizeServiceOrderAccess(user, o.id, "materials"); return true; } catch { return false; } })
     .map((o) => ({ id: o.id, title: o.title, supervisor: o.supervisorEmployeeId })) : [];
-  const financialReceipts = pendingFinancialReceipts(user, orderId).map(r => ({ id: r.id, description: r.description, fileName: r.attachment.fileName, amount: r.digital?.amount, merchant: r.digital?.merchant, direction: r.digital?.direction }));
+  const financialReceipts = pendingFinancialReceipts(user, orderId).slice(0, 100).map(r => ({ id: r.id, description: r.description, fileName: r.attachment.fileName, amount: r.digital?.amount, merchant: r.digital?.merchant, direction: r.digital?.direction }));
   const last = [...(orderId === "office" ? db.officeJournal : db.workHistory)].reverse().find(e => e.serviceOrderId === orderId && e.userId === user.id && !e.recordingSessionId);
-  const confirmationReceiptId = last?.title === "Consulta financeira" && financialReceipts.length === 1 && last.content.includes("protocolo " + financialReceipts[0].id) && Date.parse(db.fieldReceipts.find(r => r.id === financialReceipts[0].id)!.updatedAt) <= Date.parse(last.createdAt) && Date.now() - Date.parse(last.createdAt) < 15 * 60_000 ? financialReceipts[0].id : null;
+  const confirmation = last?.receiptConfirmation;
+  const confirmationReceiptId = confirmation && confirmation.sessionVersion === (user.sessionVersion ?? 0) && Date.now() - Date.parse(last!.createdAt) < 15 * 60_000 && pendingFinancialReceipts(user, orderId).some(r => r.id === confirmation.id && r.updatedAt === confirmation.updatedAt && r.digital?.amount === confirmation.amount) ? confirmation.id : null;
   return {
     canSettleReceipts: canViewServiceOrderFinancials(user), financialReceipts, confirmationReceiptId,
     authorizedOrders: fieldAssignment(user).orders.map(({ id, title }) => ({ id, title })),
@@ -136,7 +137,7 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
     if (!canViewServiceOrderFinancials(user)) throw new FieldError("Sem permissao financeira.");
     const pending = pendingFinancialReceipts(user, currentOrder);
     if (action.action === "LIST_FINANCIAL_RECEIPTS") {
-      return { message: pending.length ? pending.slice(0, 20).map(r => r.attachment.fileName + " | " + r.description + " | " + (r.digital?.amount ? "R$ " + r.digital.amount.toFixed(2) : "valor a revisar") + " | " + (r.digital?.direction || "UNKNOWN") + " | protocolo " + r.id).join("\n") + (pending.length === 1 ? "\nPara autorizar esta baixa, diga confirmo." : "\nIdentifique o comprovante para autorizar a baixa.") : "Nenhum comprovante pendente." };
+      return { message: pending.length ? pending.slice(0, 20).map(r => r.attachment.fileName.slice(0,100) + " | " + r.description.slice(0,120) + " | " + (r.digital?.amount ? "R$ " + r.digital.amount.toFixed(2) : "valor a revisar") + " | " + (r.digital?.direction || "UNKNOWN") + " | protocolo " + r.id).join("\n") + (pending.length === 1 ? "\nPara autorizar esta baixa, diga confirmo." : "\nIdentifique o comprovante para autorizar a baixa.") : "Nenhum comprovante pendente." };
     }
     const receipt = pending.find(r => r.id === action.receiptId);
     if (!receipt) throw new FieldError("Identifique o comprovante pendente desta conversa antes de dar baixa.");
@@ -412,8 +413,19 @@ export async function processFieldStatement(input: {
   } catch {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
   }
-  if (action.action === "SETTLE_RECEIPT" && /^(confirmo|confirmado|sim|ok|pode|autorizo|aprovado|aprovo)[.! ]*$/i.test(text.trim()) && context.confirmationReceiptId !== action.receiptId) {
-    action = { ...diaryAction(), action: "CLARIFY", question: "Consulte os comprovantes pendentes primeiro e confirme o documento apresentado." };
+  const affirmative = /^(?:sim[, ]+)?(?:confirmo|confirmado|autorizo|aprovo|aprovado|pode(?: dar baixa)?|dar baixa|confirmo[, ]+pode dar baixa|sim|ok)[.! ]*$/i.test(text.trim());
+  const shortConfirmation = /^(confirmo|confirmado|sim|ok|pode|autorizo|aprovado|aprovo)[.! ]*$/i.test(text.trim());
+  let previewReceiptId: string | null = null;
+  if (action.action === "SETTLE_RECEIPT") {
+    if (shortConfirmation && context.confirmationReceiptId !== action.receiptId) {
+      action = { ...diaryAction(), action: "CLARIFY", question: "Consulte os comprovantes pendentes primeiro e confirme o documento apresentado." };
+    } else if (!affirmative || context.confirmationReceiptId !== action.receiptId) {
+      const selected = pendingFinancialReceipts(user, orderId).find(r=>r.id===action.receiptId);
+      if (selected && action.confidence === "HIGH" && selected.digital?.amount && !shortConfirmation) {
+        previewReceiptId = selected.id;
+        action = { ...diaryAction(), action: "CLARIFY", question: "Confira " + selected.attachment.fileName + " | R$ " + selected.digital.amount.toFixed(2) + " | " + selected.digital.direction + " | protocolo " + selected.id + ". Para autorizar exatamente este documento, diga confirmo." };
+      } else action = { ...diaryAction(), action: "CLARIFY", question: "Identifique o comprovante e confirme os dados apresentados antes da baixa." };
+    }
   }
   // Changes to the authenticated account while the model worked must invalidate execution.
   const currentUser = db.users.find((record) => record.id === user.id);
@@ -438,18 +450,23 @@ export async function processFieldStatement(input: {
       status = "pending";
     }
   }
-  const financialAction = ["LIST_FINANCIAL_RECEIPTS", "SETTLE_RECEIPT"].includes(action.action) && canViewServiceOrderFinancials(currentUser);
+  const financialAction = (["LIST_FINANCIAL_RECEIPTS", "SETTLE_RECEIPT"].includes(action.action) || !!previewReceiptId) && canViewServiceOrderFinancials(currentUser);
   const summary = status === "executed" ? "Ação executada: " + outcome.message
     : status === "pending" ? "Pendente, sem alteração automática: " + outcome.message
     : "Registrado sem ação automática.";
-  const content = input.summaryOnly ? summary + "\n\nTranscrição completa disponível nos trechos de áudio desta gravação."
-    : "Relato: " + text.slice(0, 8500).trim() + "\n\n" + summary;
+  const content = input.summaryOnly ? summary.slice(0, 11000) + "\n\nTranscrição completa disponível nos trechos de áudio desta gravação."
+    : "Relato: " + text.slice(0, 8500).trim() + "\n\n" + summary.slice(0, Math.max(0, 11950 - text.slice(0, 8500).trim().length));
   const entry = appendFieldEntry({
     user: currentUser, orderId, nonce,
     title: financialAction ? (action.action === "LIST_FINANCIAL_RECEIPTS" ? "Consulta financeira" : "Baixa financeira") : status === "executed" ? "Registro e operação de campo" : status === "pending" ? "Relato pendente de esclarecimento" : "Relato de campo",
     content, transcript: input.summaryOnly ? "" : text, attachment,
   });
-  if (financialAction) entry.kind = "FINANCIAL";
+  if (financialAction) {
+    entry.kind = "FINANCIAL";
+    const pending = pendingFinancialReceipts(currentUser, orderId);
+    const presented = previewReceiptId ? pending.find(r=>r.id===previewReceiptId) : action.action === "LIST_FINANCIAL_RECEIPTS" && status === "executed" && pending.length === 1 ? pending[0] : undefined;
+    if (presented?.digital?.amount) entry.receiptConfirmation = { id: presented.id, updatedAt: presented.updatedAt, amount: presented.digital.amount, sessionVersion: currentUser.sessionVersion ?? 0 };
+  }
   if (status === "executed" && outcome.stockChange) {
     // The shared journal contains only validated movement details, not unrelated voice content.
     const safeMovement = { ...entry, transcript: "", attachment: undefined, content: outcome.message };

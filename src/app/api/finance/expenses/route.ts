@@ -4,13 +4,15 @@ import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canViewServiceOrderFinancials } from "@/lib/permissions";
+import { roundMoney } from "@/lib/finance-operations";
 import { createServiceExpense, db, flushDatabasePersistence, sanitizeServiceOrderForRole } from "@/lib/store";
 
 const expenseSchema = z.object({
   serviceOrderId: z.string().min(1),
   employeeId: z.string().min(1),
   category: z.enum(["GASOLINA", "ALMOCO", "MATERIAL_OU_PRODUTO", "OUTROS"]),
-  amount: z.coerce.number().positive("Informe um valor maior que zero."),
+  amount: z.coerce.number().finite().min(0.01).max(1e9),
+  requestId: z.string().uuid().optional(),
   notes: z.string().optional().default(""),
 });
 
@@ -38,6 +40,13 @@ async function POSTHandler(request: NextRequest) {
     return NextResponse.json({ message: "Dados do gasto invalidos.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
+  const previous = parsed.data.requestId ? db.serviceExpenses.find(e => e.requestId === parsed.data.requestId && e.createdByUserId === auth.user.id) : undefined;
+  if (previous) {
+    if (previous.serviceOrderId !== parsed.data.serviceOrderId || previous.employeeId !== parsed.data.employeeId || previous.amount !== roundMoney(parsed.data.amount) || previous.category !== parsed.data.category || previous.notes !== parsed.data.notes.trim()) return NextResponse.json({message:"Identificador de envio ja utilizado com outros dados."},{status:409});
+    const order = db.serviceOrders.find(o=>o.id===previous.serviceOrderId);
+    if (!order) return NextResponse.json({message:"Obra nao encontrada."},{status:404});
+    return NextResponse.json({expense:previous,serviceOrder:sanitizeServiceOrderForRole(auth.user,order)});
+  }
   const result = createServiceExpense(parsed.data, auth.user);
   if (result.error === "ORDER_NOT_FOUND") return NextResponse.json({ message: "OS nao encontrada." }, { status: 404 });
   if (result.error === "EMPLOYEE_NOT_FOUND") return NextResponse.json({ message: "Colaborador nao encontrado." }, { status: 404 });
@@ -46,6 +55,7 @@ async function POSTHandler(request: NextRequest) {
     return NextResponse.json({ message: "Nao foi possivel registrar o gasto." }, { status: 400 });
   }
 
+  result.expense.requestId = parsed.data.requestId;
   await flushDatabasePersistence();
 
   return NextResponse.json(

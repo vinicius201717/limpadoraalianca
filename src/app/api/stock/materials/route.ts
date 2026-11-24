@@ -3,8 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
-import { canManageStock } from "@/lib/permissions";
-import { db, flushDatabasePersistence, queueDatabasePersist } from "@/lib/store";
+import { randomUUID } from "node:crypto";
+import { canViewServiceOrderFinancials, canManageStock } from "@/lib/permissions";
+import { db, flushDatabasePersistence, queueDatabasePersist, recordAuditLog } from "@/lib/store";
 import { getMaterialOperationalStatus, normalizeStockStatus, stockStatusOptions } from "@/lib/stock-status";
 import type { Material } from "@/lib/types";
 
@@ -29,7 +30,7 @@ async function GETHandler(request: NextRequest) {
   }
 
   return NextResponse.json({
-    materials: db.materials.map((material) => ({ ...material, status: getMaterialOperationalStatus(material) })),
+    materials: db.materials.filter(m=>!m.archivedAt).map((material) => ({ ...material, unitCost: canViewServiceOrderFinancials(auth.user) ? material.unitCost : 0, status: getMaterialOperationalStatus(material) })),
     serviceOrderMaterials: db.serviceOrderMaterials,
   });
 }
@@ -47,18 +48,19 @@ async function POSTHandler(request: NextRequest) {
   }
 
   const material: Material = {
-    id: `mat-${Date.now()}`,
+    id: `mat-${randomUUID()}`,
     name: parsed.data.name,
     unit: parsed.data.unit,
     status: parsed.data.status ?? normalizeStockStatus(undefined),
     currentStock: parsed.data.currentStock,
     minStock: parsed.data.minStock,
-    unitCost: parsed.data.unitCost,
+    unitCost: canViewServiceOrderFinancials(auth.user) ? parsed.data.unitCost : 0,
   };
   db.materials.unshift(material);
+  recordAuditLog({userId:auth.user.id,action:"STOCK_MATERIAL_CREATED",entity:"Material",entityId:material.id,newValueJson:material});
   queueDatabasePersist();
   await flushDatabasePersistence();
-  return NextResponse.json({ material: { ...material, status: getMaterialOperationalStatus(material) } }, { status: 201 });
+  return NextResponse.json({ material: { ...material, unitCost: canViewServiceOrderFinancials(auth.user) ? material.unitCost : 0, status: getMaterialOperationalStatus(material) } }, { status: 201 });
 }
 
 async function PATCHHandler(request: NextRequest) {
@@ -76,18 +78,21 @@ async function PATCHHandler(request: NextRequest) {
   const material = db.materials.find((item) => item.id === parsed.data.id);
   if (!material) return NextResponse.json({ message: "Material nao encontrado." }, { status: 404 });
 
+  if (material.archivedAt) return NextResponse.json({message:"Material arquivado."},{status:409});
+  const old = {...material};
   Object.assign(material, {
     name: parsed.data.name ?? material.name,
     unit: parsed.data.unit ?? material.unit,
     status: parsed.data.status ?? material.status,
     currentStock: parsed.data.currentStock ?? material.currentStock,
     minStock: parsed.data.minStock ?? material.minStock,
-    unitCost: parsed.data.unitCost ?? material.unitCost,
+    unitCost: canViewServiceOrderFinancials(auth.user) ? parsed.data.unitCost ?? material.unitCost : material.unitCost,
   });
+  recordAuditLog({userId:auth.user.id,action:"STOCK_MATERIAL_UPDATED",entity:"Material",entityId:material.id,oldValueJson:old,newValueJson:material});
   queueDatabasePersist();
   await flushDatabasePersistence();
 
-  return NextResponse.json({ material: { ...material, status: getMaterialOperationalStatus(material) } });
+  return NextResponse.json({ material: { ...material, unitCost: canViewServiceOrderFinancials(auth.user) ? material.unitCost : 0, status: getMaterialOperationalStatus(material) } });
 }
 
 async function DELETEHandler(request: NextRequest) {
@@ -121,23 +126,15 @@ async function DELETEHandler(request: NextRequest) {
       );
     }
 
-    db.materials.splice(db.materials.findIndex((item) => item.id === id), 1);
-    for (let index = db.serviceOrderMaterials.length - 1; index >= 0; index -= 1) {
-      if (db.serviceOrderMaterials[index].materialId === id) db.serviceOrderMaterials.splice(index, 1);
-    }
+    if (db.materialRequestItems.some(x=>x.materialId===id && db.materialRequests.some(r=>r.id===x.requestId && !["DELIVERED","REJECTED","CANCELED"].includes(r.status)))) return NextResponse.json({message:"Material possui solicitacao pendente."},{status:409});
+    material.archivedAt = new Date().toISOString();
+    recordAuditLog({userId:auth.user.id,action:"STOCK_MATERIAL_ARCHIVED",entity:"Material",entityId:id,newValueJson:{archivedAt:material.archivedAt}});
     queueDatabasePersist();
     await flushDatabasePersistence();
     return NextResponse.json({ ok: true, removed: 1, id });
   }
 
-  const removed = db.materials.length;
-  db.materials.splice(0, db.materials.length);
-  db.serviceOrderMaterials.splice(0, db.serviceOrderMaterials.length);
-  db.materialRequests.splice(0, db.materialRequests.length);
-  db.materialRequestItems.splice(0, db.materialRequestItems.length);
-  queueDatabasePersist();
-  await flushDatabasePersistence();
-  return NextResponse.json({ ok: true, removed });
+  return NextResponse.json({message:"Exclusao em massa desativada para preservar o historico."},{status:400});
 }
 
 export const GET = withDatabase(GETHandler);

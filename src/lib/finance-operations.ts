@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ServiceExpense, ServiceOrder } from "./types";
 export const roundMoney = (value: number) => Math.round(value * 100) / 100;
 export type ServicePayment = {
-  id: string; serviceOrderId: string; description: string; amount: number; dueAt: string; createdAt: string; createdByUserId: string;
+  id: string; serviceOrderId: string; description: string; amount: number; dueAt: string; createdAt: string; createdByUserId: string; requestId?: string;
   receipts: Array<{ id: string; amount: number; paidAt: string; method: string; reference: string; createdAt: string; createdByUserId: string; reversedAt?: string; reversedByUserId?: string; reversalReason?: string }>;
 };
 export function expenseTotal(orderId: string, expenses: ServiceExpense[]) { return roundMoney(expenses.filter((item) => item.serviceOrderId === orderId).reduce((total, item) => total + item.amount, 0)); }

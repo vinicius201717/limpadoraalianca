@@ -36,6 +36,7 @@ export type WorkHistoryEntry = {
   kind: "DIARY" | "CHECKLIST" | "ASSIGNMENT" | "TRANSFER" | "WARNING" | "FINANCIAL";
   title: string; content: string; transcript: string; messageId: string;
   attachment?: AssistantAttachment; recordingSessionId?: string; createdAt: string;
+  receiptConfirmation?: { id: string; updatedAt: string; amount: number; sessionVersion: number };
 };
 export type EmployeeWarning = {
   id: string; serviceOrderId: string; employeeId: string; employeeName: string;

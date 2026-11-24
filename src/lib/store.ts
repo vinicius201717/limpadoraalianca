@@ -84,6 +84,7 @@ const initialDb = {
   warehouseJournal: [] as import("./whatsapp-types").WorkHistoryEntry[],
   officeJournal: [] as import("./whatsapp-types").WorkHistoryEntry[],
   fieldReceipts: [] as import("./field-operational-types").FieldReceipt[],
+  administrativeExpenses: [] as import("./field-operational-types").AdministrativeExpense[],
   staffAttendanceReports: [] as import("./field-operational-types").StaffAttendanceReport[],
   employeeWarnings: [] as import("./whatsapp-types").EmployeeWarning[],
   financialDocuments: [] as import("./whatsapp-types").FinancialDocument[],

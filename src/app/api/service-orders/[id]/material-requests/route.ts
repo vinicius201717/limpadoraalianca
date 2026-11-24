@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
-import { canPrepareServiceMaterials, canRequestServiceMaterials } from "@/lib/permissions";
+import { canPrepareServiceMaterials, canRequestServiceMaterials, canViewServiceOrderFinancials } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
 import { createMaterialRequest, db, flushDatabasePersistence, recordAuditLog } from "@/lib/store";
 import { InventoryError, isArchivedStockItem, moveMaterialRequest } from "@/lib/inventory-operations";
@@ -119,7 +119,7 @@ async function PATCHHandler(request: NextRequest, context: { params: Promise<{ i
   });
   await flushDatabasePersistence();
 
-  return NextResponse.json({ request: materialRequest, allocations, materials: db.materials.filter((item) => allocations.some((allocation) => allocation.materialId === item.id)) });
+  return NextResponse.json({ request: materialRequest, allocations, materials: db.materials.filter((item) => allocations.some((allocation) => allocation.materialId === item.id)).map(m=>({...m,unitCost:canViewServiceOrderFinancials(auth.user)?m.unitCost:0})) });
 }
 
 export const GET = withDatabase(GETHandler);

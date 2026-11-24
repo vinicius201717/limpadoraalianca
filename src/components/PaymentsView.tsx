@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, Button, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import type { ServicePayment } from "@/lib/finance-operations";
 import { formatCurrency } from "@/lib/format";
 
 export function PaymentsView({ initialPayments, orders }: { initialPayments: ServicePayment[]; orders: Array<{ id: string; title: string }> }) {
   const [payments, setPayments] = useState(initialPayments);
+  const createAttempt=useRef<{key:string;payload:string}|null>(null);
   const [action, setAction] = useState("create");
   const [paymentId, setPaymentId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,11 +18,13 @@ export function PaymentsView({ initialPayments, orders }: { initialPayments: Ser
     {error && <Alert severity="error">{error}</Alert>}{notice && <Alert severity="success">{notice}</Alert>}
     <Paper variant="outlined" sx={{ p: 2 }}><Stack component="form" spacing={2} onSubmit={async (event) => {
       event.preventDefault(); const form = event.currentTarget; const body = Object.fromEntries(new FormData(form));
+      const fingerprint=JSON.stringify(body);
+      if(action==="create" && createAttempt.current?.payload!==fingerprint) createAttempt.current={key:crypto.randomUUID(),payload:fingerprint};
       setBusy(true); setError(""); setNotice("");
       try {
-        const response = await fetch("/api/finance/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, action }) });
+        const response = await fetch("/api/finance/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, action, ...(action==="create"?{requestId:createAttempt.current?.key}:{}) }) });
         const result = await response.json(); if (!response.ok) throw new Error(result.message || "Falha ao salvar.");
-        setPayments((current) => [result.payment, ...current.filter((item) => item.id !== result.payment.id)]); setNotice("Lançamento registrado."); form.reset();
+        setPayments((current) => [result.payment, ...current.filter((item) => item.id !== result.payment.id)]); setNotice("Lançamento registrado."); createAttempt.current=null; form.reset();
       } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha de comunicação."); } finally { setBusy(false); }
     }}>
       <TextField select label="Operação" value={action} onChange={(event) => setAction(event.target.value)} disabled={busy}><MenuItem value="create">Programar parcela</MenuItem><MenuItem value="receive">Registrar recebimento</MenuItem><MenuItem value="reverse">Estornar recebimento</MenuItem></TextField>

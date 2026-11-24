@@ -42,7 +42,7 @@ export async function extractDigitalReceipt(bytes: Buffer, mimeType: string, des
 }
 export function pendingFinancialReceipts(user: SessionUser, orderId: string) {
   if (!canViewServiceOrderFinancials(user)) return [];
-  return db.fieldReceipts.filter(r => r.status !== "SETTLED" && (orderId === "office" || r.serviceOrderId === orderId));
+  return db.fieldReceipts.filter(r => ["PENDING_REVIEW", "REVIEWED"].includes(r.status) && (orderId === "office" || r.serviceOrderId === orderId));
 }
 export function receiptOverview(receipt: FieldReceipt) {
   const { attachment, ...data } = receipt;
@@ -54,6 +54,7 @@ export function settleFieldReceipt(user: SessionUser, id: string, targetId?: str
   const r = db.fieldReceipts.find(item => item.id === id);
   if (!r) throw new FieldError("Comprovante nao encontrado.");
   if (r.status === "SETTLED") return r;
+  if (r.status === "REVERSED") throw new FieldError("Comprovante estornado. Envie um novo documento para uma nova transacao.");
   const d = r.digital;
   if (!d || d.confidence !== "HIGH" || !d.amount || !d.paidAt || d.direction === "UNKNOWN" ||
       !/^\d{4}-\d{2}-\d{2}$/.test(d.paidAt) || !Number.isFinite(Date.parse(d.paidAt)) ||
@@ -61,22 +62,25 @@ export function settleFieldReceipt(user: SessionUser, id: string, targetId?: str
       d.paidAt > new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }))
     throw new FieldError("Dados digitais incompletos ou incertos. Revise os dados antes da baixa.");
   const order = db.serviceOrders.find(o => o.id === r.serviceOrderId && o.status !== "CANCELED");
-  if (!order) throw new FieldError("Vincule o comprovante a uma obra valida antes da baixa.");
+  if (!order && (r.serviceOrderId || d.direction !== "EXPENSE" || !r.costCenter)) throw new FieldError("Vincule uma obra valida ou selecione um centro de custo administrativo para a despesa.");
   const amount = roundMoney(d.amount);
   if (amount <= 0) throw new FieldError("Valor invalido.");
   if (db.fieldReceipts.some(other => other.id !== r.id && other.status === "SETTLED" &&
     ((r.fileHash && other.fileHash === r.fileHash) || (d.reference.trim() && other.digital?.reference.trim().toLowerCase() === d.reference.trim().toLowerCase()))))
     throw new FieldError("Ja existe baixa para este comprovante ou referencia.");
   let ledgerId: string;
-  if (d.direction === "EXPENSE") {
+  if (!order && r.costCenter) {
+    ledgerId = "admin-expense-" + r.id;
+    db.administrativeExpenses.push({ id: ledgerId, receiptId: r.id, costCenter: r.costCenter, amount, paidAt: d.paidAt, description: r.description, createdByUserId: user.id, createdAt: new Date().toISOString() });
+  } else if (order && d.direction === "EXPENSE") {
     const matches = db.serviceExpenses.filter(e => e.serviceOrderId === order.id && roundMoney(e.amount) === amount);
-    if (targetId) {
+    if (targetId && targetId !== "NEW_EXPENSE") {
       const existing = matches.find(e => e.id === targetId);
       if (!existing || db.fieldReceipts.some(other => other.settlement?.ledgerId === existing.id))
         throw new FieldError("Despesa incompativel ou ja conciliada.");
       ledgerId = existing.id;
     } else {
-      if (matches.length) throw new FieldError("Existe despesa com mesmo valor. Selecione o lancamento existente no painel para evitar duplicidade.");
+      if (matches.length && targetId !== "NEW_EXPENSE") throw new FieldError("Existe despesa com mesmo valor. Selecione o lancamento existente ou confirme uma nova despesa no painel.");
       const uploader = db.users.find(u => u.id === r.uploadedByUserId);
       const employeeId = uploader && getLinkedEmployeeId(uploader);
       if (!employeeId) throw new FieldError("Emissor sem colaborador vinculado. Concilie uma despesa existente.");
@@ -85,22 +89,23 @@ export function settleFieldReceipt(user: SessionUser, id: string, targetId?: str
       if (!result.expense) throw new FieldError("Nao foi possivel registrar a despesa.");
       ledgerId = result.expense.id;
     }
-  } else {
+  } else if (order) {
     if (!d.method) throw new FieldError("Informe a forma de recebimento antes da baixa.");
     const eligible = db.servicePayments.filter(p => p.serviceOrderId === order.id && roundMoney(p.amount - paymentReceived(p)) >= amount);
     const payment = targetId ? eligible.find(p => p.id === targetId) : eligible.length === 1 ? eligible[0] : undefined;
     if (!payment) throw new FieldError("Selecione a parcela correta no painel financeiro.");
-    if (db.servicePayments.some(p => p.receipts.some(x => !x.reversedAt && ((d.reference && x.reference === d.reference) ||
-      (p.serviceOrderId === order.id && x.amount === amount && x.paidAt === d.paidAt)))))
+    if (db.servicePayments.some(p => p.receipts.some(x => !x.reversedAt && ((d.reference.trim() && x.reference.trim().toLowerCase() === d.reference.trim().toLowerCase()) ||
+      (!d.reference.trim() && p.serviceOrderId === order.id && x.amount === amount && x.paidAt === d.paidAt)))))
       throw new FieldError("Possivel recebimento duplicado. Confira o financeiro.");
     try { ledgerId = addReceipt(payment, { amount, paidAt: d.paidAt, method: d.method, reference: d.reference || r.id }, user.id).id; }
     catch (error) { throw new FieldError((error as Error).message); }
   }
+  else throw new FieldError("Lancamento sem destino financeiro.");
   r.status = "SETTLED";
   r.updatedAt = new Date().toISOString();
   r.settlement = { ledgerId, byUserId: user.id, byName: user.name, at: r.updatedAt, amount, direction: d.direction };
   const linked = db.financialDocuments.find(item => item.id === r.id);
-  if (linked) Object.assign(linked, { direction: d.direction, amount });
+  if (linked) Object.assign(linked, { direction: d.direction === "RECEIPT" ? "PAYMENT" : "EXPENSE", amount, ...(d.direction === "RECEIPT" ? { receiptId: ledgerId } : { expenseId: ledgerId }) });
   recordAuditLog({ userId: user.id, action: "FIELD_RECEIPT_SETTLED", entity: "FieldReceipt", entityId: r.id, newValueJson: r.settlement });
   return r;
 }

@@ -3,8 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
+import { randomUUID } from "node:crypto";
 import { canManageStock } from "@/lib/permissions";
-import { db, flushDatabasePersistence, queueDatabasePersist } from "@/lib/store";
+import { db, flushDatabasePersistence, queueDatabasePersist, recordAuditLog } from "@/lib/store";
 import { normalizeStockStatus, stockStatusOptions } from "@/lib/stock-status";
 import type { Equipment } from "@/lib/types";
 
@@ -27,7 +28,7 @@ async function GETHandler(request: NextRequest) {
   }
 
   return NextResponse.json({
-    equipment: db.equipment.map((item) => ({ ...item, status: normalizeStockStatus(item.status) })),
+    equipment: db.equipment.filter(e=>!e.archivedAt).map((item) => ({ ...item, status: normalizeStockStatus(item.status) })),
     serviceOrderEquipment: db.serviceOrderEquipment,
   });
 }
@@ -44,14 +45,17 @@ async function POSTHandler(request: NextRequest) {
     return NextResponse.json({ message: "Dados invalidos.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
+  const code = parsed.data.code || "EQ-" + randomUUID().slice(0,12);
+  if (db.equipment.some(e=>e.code.toLowerCase()===code.toLowerCase())) return NextResponse.json({message:"Codigo de equipamento ja cadastrado."},{status:409});
   const equipment: Equipment = {
-    id: `eq-${Date.now()}`,
+    id: `eq-${randomUUID()}`,
     name: parsed.data.name,
-    code: parsed.data.code || `EQ-${Date.now()}`,
+    code,
     status: normalizeStockStatus(parsed.data.status),
     notes: parsed.data.notes,
   };
   db.equipment.unshift(equipment);
+  recordAuditLog({userId:auth.user.id,action:"STOCK_EQUIPMENT_CREATED",entity:"Equipment",entityId:equipment.id,newValueJson:equipment});
   queueDatabasePersist();
   await flushDatabasePersistence();
   return NextResponse.json({ equipment }, { status: 201 });
@@ -72,12 +76,16 @@ async function PATCHHandler(request: NextRequest) {
   const equipment = db.equipment.find((item) => item.id === parsed.data.id);
   if (!equipment) return NextResponse.json({ message: "Equipamento nao encontrado." }, { status: 404 });
 
+  if (equipment.archivedAt) return NextResponse.json({message:"Equipamento arquivado."},{status:409});
+  if (parsed.data.code && db.equipment.some(e=>e.id!==equipment.id && e.code.toLowerCase()===parsed.data.code!.toLowerCase())) return NextResponse.json({message:"Codigo de equipamento ja cadastrado."},{status:409});
+  const old = {...equipment};
   Object.assign(equipment, {
     name: parsed.data.name ?? equipment.name,
     code: parsed.data.code ?? equipment.code,
     status: parsed.data.status ? normalizeStockStatus(parsed.data.status) : normalizeStockStatus(equipment.status),
     notes: parsed.data.notes ?? equipment.notes,
   });
+  recordAuditLog({userId:auth.user.id,action:"STOCK_EQUIPMENT_UPDATED",entity:"Equipment",entityId:equipment.id,oldValueJson:old,newValueJson:equipment});
   queueDatabasePersist();
   await flushDatabasePersistence();
 
@@ -113,21 +121,14 @@ async function DELETEHandler(request: NextRequest) {
       );
     }
 
-    db.equipment.splice(db.equipment.findIndex((item) => item.id === id), 1);
-    for (let index = db.serviceOrderEquipment.length - 1; index >= 0; index -= 1) {
-      if (db.serviceOrderEquipment[index].equipmentId === id) db.serviceOrderEquipment.splice(index, 1);
-    }
+    equipment.archivedAt = new Date().toISOString();
+    recordAuditLog({userId:auth.user.id,action:"STOCK_EQUIPMENT_ARCHIVED",entity:"Equipment",entityId:id,newValueJson:{archivedAt:equipment.archivedAt}});
     queueDatabasePersist();
     await flushDatabasePersistence();
     return NextResponse.json({ ok: true, removed: 1, id });
   }
 
-  const removed = db.equipment.length;
-  db.equipment.splice(0, db.equipment.length);
-  db.serviceOrderEquipment.splice(0, db.serviceOrderEquipment.length);
-  queueDatabasePersist();
-  await flushDatabasePersistence();
-  return NextResponse.json({ ok: true, removed });
+  return NextResponse.json({message:"Exclusao em massa desativada para preservar o historico."},{status:400});
 }
 
 export const GET = withDatabase(GETHandler);

@@ -150,6 +150,8 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const dictateStream = useRef<MediaStream | null>(null);
   const orderRef = useRef("");
   const loadSeq = useRef(0);
+  const textAttempt=useRef<{key:string;payload:string}|null>(null);
+  const receiptAttempt=useRef<{file:File;target:string;nonce:string;ticket?:string}|null>(null);
 
   const load = useCallback(async (id: string) => {
     const sequence = ++loadSeq.current;
@@ -194,11 +196,11 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     localStorage.setItem("alianca-campo-theme", next);
   }
   useEffect(() => {
-    if (!recording) return;
+    if (!recording && !finalizing && !pending && !busy && !dictating) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [recording]);
+  }, [recording, finalizing, pending, busy, dictating]);
 
   function chooseOrder(next: string) {
     if (recording || finalizing || pending || busy || data.locked) return;
@@ -234,12 +236,14 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     const submittedOrder = orderRef.current;
     setBusy(true); setError(""); setNotice("");
     try {
-      const nonce = newNonce();
-      const body = JSON.stringify({ orderId: submittedOrder, nonce, text });
+      const fingerprint=JSON.stringify([submittedOrder,text]);
+      if(textAttempt.current?.payload!==fingerprint) textAttempt.current={key:newNonce(),payload:fingerprint};
+      const body = JSON.stringify({ orderId: submittedOrder, nonce:textAttempt.current.key, text });
       const r = await asJson<{ entry: WorkHistoryEntry; operation?: FieldOperation }>(await retryCommit(() => fetch("/api/campo/registro", {
         method: "POST", headers: { "Content-Type": "application/json" }, body,
       })));
       if (orderRef.current === submittedOrder) setData((s) => ({ ...s, entries: s.entries.some((x) => x.id === r.entry.id) ? s.entries : [...s.entries, r.entry] }));
+      textAttempt.current=null;
       setDraft("");
       if (r.operation) handleVoiceUi(r.operation);
       if (r.operation) setNotice(r.operation.status === "executed" ? r.operation.message
@@ -274,6 +278,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       const result = await asJson<{ entry?: WorkHistoryEntry; operation?: FieldOperation }>(
         await retryCommit(() => fetch("/api/campo/finalizar", { method: "POST",
           headers: { "Content-Type": "application/json" }, body: payload })));
+      if (result.entry?.kind === "FINANCIAL" && orderRef.current === target) void load(target).catch(()=>{});
       if (result.entry && orderRef.current === target) setData((state) => ({
         ...state, entries: state.entries.some((e) => e.id === result.entry!.id) ? state.entries : [...state.entries, result.entry!],
       }));
@@ -343,10 +348,11 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     setAttachmentAnchor(null);
     if (!file) return;
     const mime = file.type.split(";")[0].toLowerCase();
-    if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(mime) || file.size > 15 * 1024 * 1024) {
-      setError("Comprovante precisa ser JPG, PNG, WEBP ou PDF, com até 15 MB."); return;
+    if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(mime) || file.size > (mime === "application/pdf" ? 15 : 10) * 1024 * 1024) {
+      setError("Comprovante precisa ser JPG, PNG ou WEBP (até 10 MB), ou PDF (até 15 MB)."); return;
     }
     if (!orderRef.current) { setError("Selecione a obra ou diário antes de enviar."); return; }
+    receiptAttempt.current=null;
     setReceiptFile(file); setReceiptDescription(draft.trim()); setReceiptOpen(true);
   }
   async function sendReceipt() {
@@ -361,11 +367,12 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       }));
       const sent = await fetch(ticket.uploadUrl, { method: "PUT", headers: { "Content-Type": mime }, body: file });
       if (!sent.ok) throw new Error("Não foi possível enviar o arquivo ao armazenamento privado.");
-      const nonce = newNonce();
-      const payload = JSON.stringify({ ticket: ticket.token, nonce, description: receiptDescription.trim() });
+      if(receiptAttempt.current?.file!==file || receiptAttempt.current?.target!==target) receiptAttempt.current={file,target,nonce:newNonce()};
+      const payload = JSON.stringify({ ticket: ticket.token, nonce:receiptAttempt.current.nonce, description: receiptDescription.trim() });
       const response = await asJson<{ message: string; receipt: { id: string; status: string } }>(
         await retryCommit(() => fetch("/api/campo/comprovante", { method: "POST",
           headers: { "Content-Type": "application/json" }, body: payload })));
+      receiptAttempt.current=null;
       setReceiptOpen(false); setReceiptFile(null); setReceiptDescription(""); setDraft("");
       setNotice(response.message);
       if (orderRef.current === target) void load(target).catch(() => {});

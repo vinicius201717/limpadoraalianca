@@ -186,7 +186,7 @@ export function buildDashboardData(source?: {
     return daysWithoutEvaluation > 35;
   });
   const monthlyRevenue = sourceServiceOrders
-    .filter((order) => isSameMonth(order.scheduledStart) || isSameMonth(order.scheduledEnd))
+    .filter((order) => order.status !== "CANCELED" && (isSameMonth(order.scheduledStart) || isSameMonth(order.scheduledEnd)))
     .reduce((sum, order) => sum + order.revenue, 0);
   const pendingQuoteValue = pendingQuotes.reduce((sum, quote) => sum + quote.total, 0);
   const averageTeamRating = getAverage(activeEmployees.map((employee) => employee.averageRating));
@@ -225,7 +225,7 @@ export function buildDashboardData(source?: {
     {
       label: "Receita estimada do mes",
       value: formatCurrency(monthlyRevenue),
-      trend: "Agenda de julho em andamento",
+      trend: "Valor contratado nas obras do mês, não caixa recebido",
       tone: "success",
     },
     {

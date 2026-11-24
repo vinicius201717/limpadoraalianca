@@ -877,3 +877,32 @@ test("receipt AI extracts structured data for both PDF and photo without sending
   assert.ok(prompts.some(p => p.includes("input_image")));
   await assistantTransaction(() => assert.equal(db.serviceExpenses.length, 0));
 });
+
+
+test("administrative expense is registered separately from work costs and cannot be duplicated", async () => {
+  const { PATCH } = await import("../src/app/api/finance/campo-comprovantes/route");
+  const id = "44444444-4444-4444-8444-444444444444";
+  const digital = { transcript:"Total R$ 150",amount:150,paidAt:"2026-01-01",merchant:"Loja",reference:"ADMIN-150",direction:"EXPENSE",category:"OUTROS",method:"PIX",confidence:"HIGH" };
+  await assistantTransaction(() => {
+    db.fieldReceipts.push({id,serviceOrderId:null,uploadedByUserId:supervisor.id,uploadedByName:supervisor.name,description:"Manutencao",status:"PENDING_REVIEW",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),sourceMessageId:"fixture-admin",attachment:receipt});
+  });
+  const patch = (body:unknown) => PATCH(new NextRequest("http://localhost:3000/api/finance/campo-comprovantes",{method:"PATCH",headers:{cookie:"floor_session="+signSessionToken(finance),"content-type":"application/json"},body:JSON.stringify(body)}),undefined);
+  assert.equal((await patch({id,status:"CORRECT",digital,costCenter:"MANUTENCAO"})).status,200);
+  assert.equal((await patch({id,status:"SETTLED"})).status,200);
+  assert.equal((await patch({id,status:"SETTLED"})).status,200);
+  await assistantTransaction(()=>{assert.equal(db.administrativeExpenses.length,1);assert.equal(db.administrativeExpenses[0].amount,150);assert.equal(db.serviceExpenses.length,0)});
+});
+
+test("a model-proposed settlement cannot bypass explicit confirmation or a changed receipt version", async () => {
+  const id = "55555555-5555-4555-8555-555555555555";
+  await assistantTransaction(() => {
+    db.fieldReceipts.push({id,serviceOrderId:"a",uploadedByUserId:supervisor.id,uploadedByName:supervisor.name,description:"Pix recebido",status:"PENDING_REVIEW",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),sourceMessageId:"fixture-confirm",attachment:receipt,digital:{transcript:"Pix R$ 100",amount:100,paidAt:"2026-01-01",merchant:"Alianca",reference:"CONFIRM-100",direction:"RECEIPT",category:"OUTROS",method:"PIX",confidence:"HIGH"}});
+  });
+  const action = fieldCommand({action:"SETTLE_RECEIPT",receiptId:id});
+  const preview = await runFieldCommand(finance,"office","receipt-preview-test1",action,"Dar baixa no comprovante");
+  assert.equal(preview.operation.status,"pending");
+  await assistantTransaction(()=>{assert.equal(db.fieldReceipts[0].status,"PENDING_REVIEW");db.fieldReceipts[0].digital!.amount=110;db.fieldReceipts[0].updatedAt="2099-01-01T00:00:00.000Z"});
+  const stale = await runFieldCommand(finance,"office","receipt-preview-stale",action,"confirmo");
+  assert.equal(stale.operation.status,"pending");
+  await assistantTransaction(()=>assert.equal(db.servicePayments[0].receipts.length,0));
+});

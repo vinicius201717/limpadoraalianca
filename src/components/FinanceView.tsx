@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -122,6 +122,8 @@ export function FinanceView({
   const [editingOrder, setEditingOrder] = useState<ServiceOrder | null>(null);
   const [revenueInput, setRevenueInput] = useState("0");
   const [expensesInput, setExpensesInput] = useState("0");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const expenseAttempt = useRef<{key:string; payload:string}|null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -162,6 +164,7 @@ export function FinanceView({
 
   function openEditor(order: ServiceOrder) {
     setEditingOrder(order);
+    setAdjustmentReason("");
     setRevenueInput(String(order.revenue));
     setExpensesInput(String(order.expenses));
     setError("");
@@ -186,12 +189,14 @@ export function FinanceView({
       return;
     }
 
+    if (adjustmentReason.trim().length < 5) { setError("Informe o motivo do ajuste (minimo 5 caracteres)."); return; }
     setSaving(true);
     setError("");
+    try {
     const response = await fetch(`/api/service-orders/${editingOrder.id}/financials`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ revenue, expenses }),
+      body: JSON.stringify({ revenue, expenses, reason: adjustmentReason.trim() }),
     });
     const data = await response.json().catch(() => null);
     setSaving(false);
@@ -207,6 +212,8 @@ export function FinanceView({
     setRevenueInput(String(updatedOrder.revenue));
     setExpensesInput(String(updatedOrder.expenses));
     setNotice("Valores financeiros atualizados com sucesso.");
+    setAdjustmentReason("");
+    } catch { setError("Falha de comunicacao. Confira os valores antes de reenviar."); } finally { setSaving(false); }
   }
 
   async function saveExpense() {
@@ -224,18 +231,16 @@ export function FinanceView({
       return;
     }
 
+    const payload = { serviceOrderId:expenseServiceOrderId,employeeId:expenseEmployeeId,category:expenseCategory,amount,notes:expenseNotes };
+    const fingerprint=JSON.stringify(payload);
+    if (expenseAttempt.current?.payload!==fingerprint) expenseAttempt.current={key:crypto.randomUUID(),payload:fingerprint};
     setExpenseSaving(true);
     setExpenseError("");
+    try {
     const response = await fetch("/api/finance/expenses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        serviceOrderId: expenseServiceOrderId,
-        employeeId: expenseEmployeeId,
-        category: expenseCategory,
-        amount,
-        notes: expenseNotes,
-      }),
+      body: JSON.stringify({...payload,requestId:expenseAttempt.current.key}),
     });
     const data = await response.json().catch(() => null);
     setExpenseSaving(false);
@@ -248,11 +253,13 @@ export function FinanceView({
     const updatedOrder = data.serviceOrder as ServiceOrder;
     const expense = data.expense as ServiceExpense;
     setOrders((current) => current.map((order) => (order.id === updatedOrder.id ? updatedOrder : order)));
-    setExpenses((current) => [expense, ...current]);
+    expenseAttempt.current=null;
+    setExpenses((current) => [expense, ...current.filter(e=>e.id!==expense.id)]);
     setExpenseDialogOpen(false);
     setExpenseAmountInput("");
     setExpenseNotes("");
     setNotice("Gasto registrado e custo da OS atualizado.");
+    } catch { setExpenseError("Falha de conexao. Reenvie os mesmos dados para consultar ou concluir o lancamento."); } finally { setExpenseSaving(false); }
   }
 
   return (
@@ -497,12 +504,13 @@ export function FinanceView({
                 <Info label="Margem calculada" value={`${editingMargin}%`} />
               </Paper>
             </Box>
+            <TextField label="Motivo do ajuste" required multiline value={adjustmentReason} onChange={e => setAdjustmentReason(e.target.value)} inputProps={{ minLength: 5, maxLength: 1000 }} />
             {saving && <LinearProgress sx={{ height: 7, borderRadius: 999 }} />}
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditingOrder(null)}>Fechar</Button>
-          <Button variant="contained" onClick={saveFinancials} disabled={saving}>
+          <Button variant="contained" onClick={saveFinancials} disabled={saving || adjustmentReason.trim().length < 5}>
             Salvar valores
           </Button>
         </DialogActions>

@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireApiUser } from "@/lib/api-handlers";
-import { canAccessAllServiceOrders, canPrepareServiceMaterials, canRequestServiceMaterials } from "@/lib/permissions";
+import { canAccessAllServiceOrders, canPrepareServiceMaterials, canRequestServiceMaterials, canViewServiceOrderFinancials } from "@/lib/permissions";
 import { authorizeServiceOrderAccess, ServiceOrderAuthorizationError } from "@/lib/service-order-access";
 import { canUserAccessOrder, db, flushDatabasePersistence, recordAuditLog } from "@/lib/store";
 import { getMaterialOperationalStatus } from "@/lib/stock-status";
@@ -52,7 +52,7 @@ async function GETHandler(request: NextRequest, context: { params: Promise<{ id:
 
   const materials = db.serviceOrderMaterials
     .filter((item) => item.serviceOrderId === id)
-    .map((item) => ({ ...item, material: db.materials.find((material) => material.id === item.materialId) }));
+    .map((item) => { const material = db.materials.find(m => m.id === item.materialId); return {...item, material: material ? {...material, unitCost: canViewServiceOrderFinancials(auth.user) ? material.unitCost : 0} : undefined}; });
   return NextResponse.json({ materials });
 }
 
@@ -150,7 +150,7 @@ async function PATCHHandler(request: NextRequest, context: { params: Promise<{ i
 
   return NextResponse.json({
     material,
-    stockMaterial: materialStock ? { ...materialStock, status: getMaterialOperationalStatus(materialStock) } : undefined,
+    stockMaterial: materialStock ? { ...materialStock, unitCost: canViewServiceOrderFinancials(auth.user) ? materialStock.unitCost : 0, status: getMaterialOperationalStatus(materialStock) } : undefined,
   });
 }
 
