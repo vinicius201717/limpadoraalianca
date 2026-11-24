@@ -23,7 +23,7 @@ Se o usuário relatar claramente que um colaborador faltou no dia informado: REP
 Se informar que alguém saiu antes do horário: REPORT_EARLY_LEAVE, employeeIds e occurredOn; se horário exato não foi informado, occurredAt=null. Não invente horário nem motivo.
 Pode registrar mais de um colaborador no MESMO tipo de ocorrência e data em uma ação. Se misturar falta e saída no mesmo áudio, CLARIFY.
 Se o usuário pedir para explicar, completar ou corrigir a descrição de um comprovante já anexado: DESCRIBE_RECEIPT usando receiptId do contexto (se inequívoco), details com descrição completa sem valores inventados. Não crie recibos só a partir da fala; é necessário enviar arquivo na interface.
-Para gastos, reembolsos, notas fiscais e comprovantes: não faça baixa financeira, apenas DIARY/CLARIFY ou DESCRIBE_RECEIPT. Comprovante enviado vira documento pendente de conferência no financeiro.
+Para perfis com canSettleReceipts=true: pedido de consultar comprovantes pendentes => LIST_FINANCIAL_RECEIPTS. Pedido explícito de dar baixa ou confirmar comprovante financeiro => SETTLE_RECEIPT com receiptId exato de financialReceipts. Para confirmação curta como "confirmo", use somente o comprovante único apresentado em confirmationReceiptId; se ausente, CLARIFY. Para baixa explícita sem ID, use somente se há um único pendente no contexto. Não invente valores ou IDs. Para perfis sem acesso financeiro, nunca SETTLE_RECEIPT nem LIST_FINANCIAL_RECEIPTS.
 Se falarem "quero ver minhas tarefas" ou pedir resumo, DIARY; relatórios são gerados pelo controle do aplicativo, não finalize uma tarefa.
 
 Ação explícita como "crie item limpar sala e atribua a João e Maria": CREATE_CHECKLIST, título, details e employeeIds exatos do contexto; esta é UMA ação composta com responsáveis.
@@ -35,7 +35,7 @@ ALMOXARIFADO e gestão: "chegaram 5 galões de X" para produto cadastrado: STOCK
 "voltaram 2 unidades de X": STOCK_RETURN; "gastaram 2 unidades": STOCK_CONSUME; "danificou 1": STOCK_DAMAGE; "perdeu 1": STOCK_LOSS, mas nunca confunda essas ações.
 Máquina/ferramenta com código único: EQUIPMENT_DISPATCH / EQUIPMENT_RETURN / EQUIPMENT_DAMAGE. Não confunda com consumíveis.
 Não invente IDs de obras, produtos, equipamentos, itens ou colaboradores: use EXATAMENTE o authorizedContext. Para nome duplicado, pessoa parecida, medida ausente, operação incerta, comando que inclui múltiplas ações independentes ou quantidades contraditórias: CLARIFY e uma pergunta objetiva.
-Não crie advertências formais, demissões, pagamentos, lançamentos financeiros ou exclusões por voz. Faltas e saídas antecipadas são apenas registros relatados para apuração.
+Não crie advertências formais, demissões ou exclusões por voz. A única operação financeira permitida aqui é SETTLE_RECEIPT conforme a regra acima. Faltas e saídas antecipadas são apenas registros relatados para apuração.
 Não interprete relato passado como pedido atual de alteração sem comando explícito e contexto inequívoco. Se a frase for cortada em parte por áudio segmentado, classifique como DIARY, não complete com imaginação.
 Não atribua progresso ou conclusão com base apenas em contexto anterior.
 Em descrições de comprovantes, preserve valores apenas quando o usuário os disser explicitamente; isso NÃO autoriza lançamento financeiro. Resumos devem reproduzir o que foi dito sem inventar.

@@ -811,3 +811,69 @@ test("a voice report request is scoped to one work and cannot run in a general j
   assert.equal(denied.operation.status, "pending");
   await assistantTransaction(() => assert.equal(db.workReports.length, 0));
 });
+
+
+test("digital receipt settlement requires finance permission, is idempotent and updates the actual expense ledger", async () => {
+  const { PATCH } = await import("../src/app/api/finance/campo-comprovantes/route");
+  const id = "11111111-1111-4111-8111-111111111111";
+  await assistantTransaction(() => {
+    db.fieldReceipts.push({ id, serviceOrderId: "a", uploadedByUserId: supervisor.id, uploadedByName: supervisor.name,
+      description: "Compra de produto", status: "PENDING_REVIEW", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      sourceMessageId: "campo:supervisor:receipt-digital-test", attachment: { ...receipt, storagePath: "campo/22222222-2222-4222-8222-222222222222" },
+      digital: { transcript: "Total R$ 50,00", amount: 50, paidAt: "2026-01-01", merchant: "Loja", reference: "ABC-123", direction: "EXPENSE", category: "MATERIAL_OU_PRODUTO", method: "PIX", confidence: "HIGH" },
+    });
+  });
+  const patch = (user: SystemUser) => PATCH(new NextRequest("http://localhost:3000/api/finance/campo-comprovantes", {
+    method: "PATCH", headers: { cookie: "floor_session=" + signSessionToken(user), "content-type": "application/json" }, body: JSON.stringify({ id, status: "SETTLED" }),
+  }), undefined);
+  assert.equal((await patch(supervisor)).status, 403);
+  assert.equal((await patch(manager)).status, 403);
+  assert.equal((await patch(finance)).status, 200);
+  assert.equal((await patch(finance)).status, 200);
+  await assistantTransaction(() => {
+    assert.equal(db.fieldReceipts[0].status, "SETTLED");
+    assert.equal(db.fieldReceipts[0].settlement?.byUserId, finance.id);
+    assert.equal(db.serviceExpenses.length, 1);
+    assert.equal(db.serviceOrders.find(o => o.id === "a")?.expenses, 50);
+  });
+});
+
+test("natural confirmation is scoped to a presented financial receipt and records a single payment", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  await assistantTransaction(() => {
+    db.fieldReceipts.push({ id, serviceOrderId: "a", uploadedByUserId: supervisor.id, uploadedByName: supervisor.name,
+      description: "Recebimento do cliente", status: "PENDING_REVIEW", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      sourceMessageId: "campo:supervisor:receipt-payment-test", attachment: receipt,
+      digital: { transcript: "Pix recebido R$ 100", amount: 100, paidAt: "2026-01-01", merchant: "Alianca", reference: "PIX-123", direction: "RECEIPT", category: "OUTROS", method: "PIX", confidence: "HIGH" },
+    });
+  });
+  const settle = fieldCommand({ action: "SETTLE_RECEIPT", receiptId: id });
+  const premature = await runFieldCommand(finance, "office", "receipt-confirm-early1", settle, "confirmo");
+  assert.equal(premature.operation.status, "pending");
+  const denied = await runFieldCommand(supervisor, "a", "receipt-confirm-denied", settle, "Dar baixa no comprovante");
+  assert.equal(denied.operation.status, "pending");
+  const listed = await runFieldCommand(finance, "office", "receipt-list-test001", fieldCommand({ action: "LIST_FINANCIAL_RECEIPTS" }), "Quais comprovantes estao pendentes?");
+  assert.equal(listed.operation.status, "executed");
+  assert.match(listed.operation.message, /100.00/);
+  const confirmed = await runFieldCommand(finance, "office", "receipt-confirm-test1", settle, "confirmo");
+  assert.equal(confirmed.operation.status, "executed");
+  await assistantTransaction(() => {
+    assert.equal(db.servicePayments[0].receipts.length, 1);
+    assert.equal(db.fieldReceipts[0].status, "SETTLED");
+    assert.equal(db.servicePayments[0].receipts[0].amount, 100);
+  });
+});
+
+
+test("receipt AI extracts structured data for both PDF and photo without sending a financial command", async () => {
+  const { extractDigitalReceipt } = await import("../src/lib/field-receipts");
+  const expected = { transcript: "Total R$ 150,00", amount: 150, paidAt: "2026-01-01", merchant: "Loja", reference: "TX-150", direction: "EXPENSE", category: "MATERIAL_OU_PRODUTO", method: "PIX", confidence: "HIGH" };
+  nextIntent = expected as unknown as AssistantIntent;
+  const pdf = await extractDigitalReceipt(Buffer.from("%PDF-1.4 test"), "application/pdf", "");
+  const image = await extractDigitalReceipt(Buffer.from([255,216,255,217]), "image/jpeg", "Material");
+  assert.deepEqual(pdf, expected);
+  assert.deepEqual(image, expected);
+  assert.ok(prompts.some(p => p.includes("input_file")));
+  assert.ok(prompts.some(p => p.includes("input_image")));
+  await assistantTransaction(() => assert.equal(db.serviceExpenses.length, 0));
+});

@@ -4,7 +4,8 @@ import { fieldActionSchema, diaryAction, type FieldAction } from "./field-action
 import { interpretFieldCommand } from "./field-command-ai";
 import { appendFieldEntry, authorizeFieldContext, fieldActor, fieldAssignment, FieldError } from "./field-assistant";
 import { authorizeServiceOrderAccess } from "./service-order-access";
-import { canManageStock, canRequestServiceMaterials } from "./permissions";
+import { canManageStock, canRequestServiceMaterials, canViewServiceOrderFinancials } from "./permissions";
+import { pendingFinancialReceipts, settleFieldReceipt } from "./field-receipts";
 import {
   assignChecklistItem, blockChecklistItem, completeChecklistItem, createChecklistItem,
   db, getLinkedEmployeeId, isEmployeeAssignedToServiceOrder, isOpenServiceOrderForTeam,
@@ -114,7 +115,11 @@ export function fieldSpeechContext(user: SessionUser, orderId: string) {
   const inventoryOrders = stockAllowed(user) ? db.serviceOrders.filter((o) => isOpenServiceOrderForTeam(o.status))
     .filter((o) => { try { authorizeServiceOrderAccess(user, o.id, "materials"); return true; } catch { return false; } })
     .map((o) => ({ id: o.id, title: o.title, supervisor: o.supervisorEmployeeId })) : [];
+  const financialReceipts = pendingFinancialReceipts(user, orderId).map(r => ({ id: r.id, description: r.description, fileName: r.attachment.fileName, amount: r.digital?.amount, merchant: r.digital?.merchant, direction: r.digital?.direction }));
+  const last = [...(orderId === "office" ? db.officeJournal : db.workHistory)].reverse().find(e => e.serviceOrderId === orderId && e.userId === user.id && !e.recordingSessionId);
+  const confirmationReceiptId = last?.title === "Consulta financeira" && financialReceipts.length === 1 && last.content.includes("protocolo " + financialReceipts[0].id) && Date.parse(db.fieldReceipts.find(r => r.id === financialReceipts[0].id)!.updatedAt) <= Date.parse(last.createdAt) && Date.now() - Date.parse(last.createdAt) < 15 * 60_000 ? financialReceipts[0].id : null;
   return {
+    canSettleReceipts: canViewServiceOrderFinancials(user), financialReceipts, confirmationReceiptId,
     authorizedOrders: fieldAssignment(user).orders.map(({ id, title }) => ({ id, title })),
     role: user.role, currentOrder: current ? { id: current.id, title: current.title, status: current.status } : null,
     warehouseMode: orderId === "warehouse", employees: team, checklist, materials, equipment, inventoryOrders, receipts,
@@ -127,6 +132,17 @@ function executeFieldOperation(user: SessionUser, currentOrder: string, action: 
   if (action.action === "DIARY") return { message: "Relato salvo no diário." };
   if (action.action === "CLARIFY" || action.confidence !== "HIGH")
     throw new FieldError(action.question.trim() || "Dê mais detalhes para executar a ação com segurança.");
+  if (action.action === "LIST_FINANCIAL_RECEIPTS" || action.action === "SETTLE_RECEIPT") {
+    if (!canViewServiceOrderFinancials(user)) throw new FieldError("Sem permissao financeira.");
+    const pending = pendingFinancialReceipts(user, currentOrder);
+    if (action.action === "LIST_FINANCIAL_RECEIPTS") {
+      return { message: pending.length ? pending.slice(0, 20).map(r => r.attachment.fileName + " | " + r.description + " | " + (r.digital?.amount ? "R$ " + r.digital.amount.toFixed(2) : "valor a revisar") + " | " + (r.digital?.direction || "UNKNOWN") + " | protocolo " + r.id).join("\n") + (pending.length === 1 ? "\nPara autorizar esta baixa, diga confirmo." : "\nIdentifique o comprovante para autorizar a baixa.") : "Nenhum comprovante pendente." };
+    }
+    const receipt = pending.find(r => r.id === action.receiptId);
+    if (!receipt) throw new FieldError("Identifique o comprovante pendente desta conversa antes de dar baixa.");
+    settleFieldReceipt(user, receipt.id);
+    return { message: "Baixa financeira registrada. Protocolo " + receipt.id, entityId: receipt.id };
+  }
   if (action.action === "SET_THEME") {
     if (!action.uiTheme) throw new FieldError("Informe se deseja o tema claro ou escuro.");
     return { message: "Tema visual alterado para " + (action.uiTheme === "light" ? "claro" : "escuro") + ".",
@@ -396,6 +412,9 @@ export async function processFieldStatement(input: {
   } catch {
     advisory = "IA indisponível para interpretar ações. O relato foi registrado, sem alteração no checklist ou estoque.";
   }
+  if (action.action === "SETTLE_RECEIPT" && /^(confirmo|confirmado|sim|ok|pode|autorizo|aprovado|aprovo)[.! ]*$/i.test(text.trim()) && context.confirmationReceiptId !== action.receiptId) {
+    action = { ...diaryAction(), action: "CLARIFY", question: "Consulte os comprovantes pendentes primeiro e confirme o documento apresentado." };
+  }
   // Changes to the authenticated account while the model worked must invalidate execution.
   const currentUser = db.users.find((record) => record.id === user.id);
   if (!currentUser || !currentUser.isActive || currentUser.mustChangePassword ||
@@ -419,6 +438,7 @@ export async function processFieldStatement(input: {
       status = "pending";
     }
   }
+  const financialAction = ["LIST_FINANCIAL_RECEIPTS", "SETTLE_RECEIPT"].includes(action.action) && canViewServiceOrderFinancials(currentUser);
   const summary = status === "executed" ? "Ação executada: " + outcome.message
     : status === "pending" ? "Pendente, sem alteração automática: " + outcome.message
     : "Registrado sem ação automática.";
@@ -426,9 +446,10 @@ export async function processFieldStatement(input: {
     : "Relato: " + text.slice(0, 8500).trim() + "\n\n" + summary;
   const entry = appendFieldEntry({
     user: currentUser, orderId, nonce,
-    title: status === "executed" ? "Registro e operação de campo" : status === "pending" ? "Relato pendente de esclarecimento" : "Relato de campo",
+    title: financialAction ? (action.action === "LIST_FINANCIAL_RECEIPTS" ? "Consulta financeira" : "Baixa financeira") : status === "executed" ? "Registro e operação de campo" : status === "pending" ? "Relato pendente de esclarecimento" : "Relato de campo",
     content, transcript: input.summaryOnly ? "" : text, attachment,
   });
+  if (financialAction) entry.kind = "FINANCIAL";
   if (status === "executed" && outcome.stockChange) {
     // The shared journal contains only validated movement details, not unrelated voice content.
     const safeMovement = { ...entry, transcript: "", attachment: undefined, content: outcome.message };

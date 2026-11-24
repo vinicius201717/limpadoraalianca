@@ -19,6 +19,7 @@ import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 import DoneAllRoundedIcon from "@mui/icons-material/DoneAllRounded";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
+import { FieldReceiptsBoard } from "./FieldReceiptsBoard";
 import type { WorkHistoryEntry, WorkReport } from "@/lib/whatsapp-types";
 
 type Order = { id: string; title: string; status: string; customer?: string };
@@ -27,7 +28,6 @@ type Data = { user: { id?: string; name: string; role: string; canViewFinancials
   locked?: boolean; assignedOrderId?: string | null; assignmentProblem?: string | null };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 type StaffReport = { id: string; employeeName: string; occurredOn: string; occurredAt?: string; kind: "ABSENCE" | "EARLY_LEAVE"; description: string; reportedByName: string };
-type ReceiptOverview = { id: string; fileName: string; description: string; status: string; uploadedByName: string; createdAt: string };
 type FieldOperation = { status: string; message: string; ui?: { kind: "THEME" | "ORDER" | "REPORT"; value: string } };
 type FieldColor = "dark" | "light";
 const newNonce = () => crypto.randomUUID().replace(/-/g, "");
@@ -127,7 +127,10 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   const [staffOpen, setStaffOpen] = useState(false);
   const [staffReports, setStaffReports] = useState<StaffReport[]>([]);
   const [financeOpen, setFinanceOpen] = useState(false);
-  const [financeReceipts, setFinanceReceipts] = useState<ReceiptOverview[]>([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState("");
+  const [warehouseLoading, setWarehouseLoading] = useState(false);
+  const [warehouseError, setWarehouseError] = useState("");
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const shouldContinue = useRef(false);
@@ -348,7 +351,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
   }
   async function sendReceipt() {
     const file = receiptFile; const target = orderRef.current;
-    if (!file || !target || busy || dictating || !receiptDescription.trim()) return;
+    if (!file || !target || busy || dictating) return;
     setBusy(true); setError(""); setNotice("Enviando comprovante ao financeiro...");
     try {
       const mime = file.type.split(";")[0].toLowerCase();
@@ -403,18 +406,19 @@ export function FieldAssistantView({ userName }: { userName: string }) {
     } catch { setError("Autorize o microfone para ditar a descrição."); }
   }
   async function openStaff() {
-    setStaffOpen(true);
+    setStaffOpen(true); setStaffLoading(true); setStaffError("");
     try {
       const result = await asJson<{ reports: StaffReport[] }>(await fetch("/api/campo/ocorrencias", { cache: "no-store" }));
       setStaffReports(result.reports);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar ocorrências."); }
+    } catch (cause) { setStaffError(cause instanceof Error ? cause.message : "Falha ao carregar ocorrências."); }
+    finally { setStaffLoading(false); }
   }
-  async function openFinance() {
-    setFinanceOpen(true);
-    try {
-      const result = await asJson<{ receipts: ReceiptOverview[] }>(await fetch("/api/finance/campo-comprovantes", { cache: "no-store" }));
-      setFinanceReceipts(result.receipts);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar financeiro."); }
+  function openFinance() { setFinanceOpen(true); }
+  async function openWarehouse() {
+    setWarehouseOpen(true); setWarehouseLoading(true); setWarehouseError("");
+    try { await load(orderRef.current); }
+    catch (cause) { setWarehouseError(cause instanceof Error ? cause.message : "Falha ao carregar almoxarifado."); }
+    finally { setWarehouseLoading(false); }
   }
   async function uploadFile(file: File, type: "image" | "video") {
     const target = orderRef.current;
@@ -495,12 +499,12 @@ export function FieldAssistantView({ userName }: { userName: string }) {
             {recording ? "Gravando mensagem de voz..." : finalizing ? "Organizando registro..." : userName + " · registro operacional"}
           </Typography>
         </Box>
-        {canStaff && <IconButton size="small" onClick={() => void openStaff()} aria-label="Ver faltas e saídas antecipadas"
+        {canStaff && <IconButton size="small" onClick={() => void openStaff()} title="Ocorrências da equipe" aria-label="Ver faltas e saídas antecipadas"
           sx={{ color: colors.text }}><PeopleAltRoundedIcon /></IconButton>}
         {canFinance && <IconButton size="small" onClick={() => void openFinance()} aria-label="Ver comprovantes do financeiro"
           sx={{ color: colors.text }}><ReceiptLongRoundedIcon /></IconButton>}
-        {["OWNER", "GERENTE", "ALMOXARIFADO"].includes(data.user.role) && <IconButton size="small" onClick={() => setWarehouseOpen(true)}
-          aria-label="Ver almoxarifado" sx={{ color: colors.text }}><Inventory2RoundedIcon /></IconButton>}
+        {["OWNER", "GERENTE", "ALMOXARIFADO"].includes(data.user.role) && <IconButton size="small" onClick={() => void openWarehouse()}
+          title="Movimentos do almoxarifado" aria-label="Ver almoxarifado" sx={{ color: colors.text }}><Inventory2RoundedIcon /></IconButton>}
         <IconButton size="small" onClick={changeTheme} aria-label={themeMode === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
           sx={{ color: colors.text }}>{themeMode === "dark" ? <LightModeRoundedIcon /> : <DarkModeRoundedIcon />}</IconButton>
         <IconButton size="small" onClick={() => void load(orderRef.current).catch((e) => setError(e.message))}
@@ -519,7 +523,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
           {data.locked ? <Typography noWrap fontWeight={750} sx={{ fontSize: 13.5, color: colors.text }}>
             {selected?.title || "Sem obra atribuída"}
           </Typography> :
-          <Select size="small" fullWidth displayEmpty value={orderId} disabled={recording || finalizing || busy || pending > 0}
+          <Select MenuProps={{ sx: { zIndex: 1800 } }} size="small" fullWidth displayEmpty value={orderId} disabled={recording || finalizing || busy || pending > 0}
             onChange={(event) => chooseOrder(event.target.value)}
             sx={{
               height: 35, bgcolor: colors.input, color: colors.text, borderRadius: 2, fontWeight: 750,
@@ -667,7 +671,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
           <CircularProgress size={10} sx={{ mr: 0.6, color: colors.accent }} /> Salvando e processando...
         </Typography> : null}
       </Box>
-      <Menu anchorEl={attachmentAnchor} open={Boolean(attachmentAnchor)} onClose={() => setAttachmentAnchor(null)}
+      <Menu sx={{ zIndex: 1800 }} anchorEl={attachmentAnchor} open={Boolean(attachmentAnchor)} onClose={() => setAttachmentAnchor(null)}
         PaperProps={{ sx: { bgcolor: colors.dialog, color: colors.text, borderRadius: 3, minWidth: 225, border: `1px solid ${colors.border}` } }}>
         <MenuItem onClick={() => { setAttachmentAnchor(null); photoInput.current?.click(); }}><ImageRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Foto da obra</MenuItem>
         <MenuItem onClick={() => { setAttachmentAnchor(null); videoInput.current?.click(); }}><VideocamRoundedIcon sx={{ mr: 1.3, color: colors.accent }}/> Vídeo da obra</MenuItem>
@@ -686,7 +690,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
       <input ref={receiptCameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden
         onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; selectReceipt(file); }} />
 
-      <Dialog open={receiptOpen} onClose={busy || dictating ? undefined : () => { setReceiptOpen(false); setReceiptFile(null); }}
+      <Dialog sx={{ zIndex: 1800 }} open={receiptOpen} onClose={busy || dictating ? undefined : () => { setReceiptOpen(false); setReceiptFile(null); }}
         fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: colors.dialog, color: colors.text, borderRadius: 3 } }}>
         <DialogTitle sx={{ fontWeight: 850, display: "flex", alignItems: "center", gap: 1 }}>
           <ReceiptLongRoundedIcon sx={{ color: colors.accent }}/> Comprovante para o financeiro
@@ -697,7 +701,7 @@ export function FieldAssistantView({ userName }: { userName: string }) {
           </Typography>
           <TextField fullWidth multiline minRows={3} maxRows={6} value={receiptDescription}
             onChange={(event) => setReceiptDescription(event.target.value)}
-            placeholder="Descreva o comprovante. Você também pode ditar a descrição."
+            placeholder="Descrição opcional. A IA lerá o comprovante; você também pode ditar o contexto."
             disabled={busy || dictating} InputProps={{ sx: { color: colors.text, bgcolor: colors.input } }}
             sx={{ "& .MuiOutlinedInput-notchedOutline": { borderColor: colors.border },
               "& textarea::placeholder": { color: colors.muted, opacity: 1 } }}
@@ -711,48 +715,47 @@ export function FieldAssistantView({ userName }: { userName: string }) {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button sx={{ color: colors.muted }} disabled={busy || dictating} onClick={() => { setReceiptOpen(false); setReceiptFile(null); }}>Cancelar</Button>
-          <Button variant="contained" color="success" disabled={!receiptFile || !receiptDescription.trim() || busy || dictating}
+          <Button variant="contained" color="success" disabled={!receiptFile || busy || dictating}
             onClick={() => void sendReceipt()}>{busy ? "Salvando..." : "Enviar ao financeiro"}</Button>
         </DialogActions>
       </Dialog>
-      <Drawer anchor="right" open={staffOpen} onClose={() => setStaffOpen(false)}
+      <Drawer sx={{ zIndex: 1800 }} anchor="right" open={staffOpen} onClose={() => setStaffOpen(false)}
         PaperProps={{ sx: { width: "min(100vw, 460px)", bgcolor: colors.dialog, color: colors.text, p: 2, overflow: "auto" } }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography fontWeight={850} variant="h6">Faltas e saídas antecipadas</Typography>
           <IconButton aria-label="Fechar ocorrências" sx={{ color: colors.text }} onClick={() => setStaffOpen(false)}><CloseRoundedIcon /></IconButton>
         </Stack>
         <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Ocorrências informadas por voz, sem descontos ou punições automáticas.</Typography>
-        {!staffReports.length && <Typography sx={{ color: colors.muted }}>Nenhuma ocorrência acessível ao seu perfil.</Typography>}
+        <Button onClick={() => void openStaff()} disabled={staffLoading}>Atualizar ocorrências</Button>
+        {staffLoading && <CircularProgress size={22}/>}
+        {staffError && <Alert severity="error">{staffError}</Alert>}
+        {!staffLoading && !staffError && !staffReports.length && <Typography sx={{ color: colors.muted }}>Nenhuma ocorrência registrada. No chat, relate uma falta ou saída antecipada, informando nome e data.</Typography>}
         <Stack gap={1.3}>{staffReports.map((report) => <Box key={report.id} sx={{ bgcolor: colors.incoming, p: 2, borderRadius: 2 }}>
           <Typography fontWeight={750}>{report.employeeName} · {report.kind === "ABSENCE" ? "Falta informada" : "Saída antecipada"}</Typography>
           <Typography sx={{ color: colors.muted, fontSize: 12 }}>{report.occurredOn}{report.occurredAt ? " às " + report.occurredAt : ""} · {report.reportedByName}</Typography>
           {report.description && <Typography sx={{ fontSize: 13, mt: 0.6, whiteSpace: "pre-wrap" }}>{report.description}</Typography>}
         </Box>)}</Stack>
       </Drawer>
-      <Drawer anchor="right" open={financeOpen} onClose={() => setFinanceOpen(false)}
+      <Drawer sx={{ zIndex: 1800 }} anchor="right" open={financeOpen} onClose={() => setFinanceOpen(false)}
         PaperProps={{ sx: { width: "min(100vw, 480px)", bgcolor: colors.dialog, color: colors.text, p: 2, overflow: "auto" } }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="h6" fontWeight={850}>Comprovantes do financeiro</Typography>
           <IconButton aria-label="Fechar comprovantes" sx={{ color: colors.text }} onClick={() => setFinanceOpen(false)}><CloseRoundedIcon /></IconButton>
         </Stack>
-        <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Documentos recebidos pelo PWA, aguardando conferência contábil.</Typography>
-        {!financeReceipts.length && <Typography sx={{ color: colors.muted }}>Nenhum documento para conferir.</Typography>}
-        <Stack gap={1.3}>{financeReceipts.slice(0, 80).map((doc) => <Box key={doc.id} sx={{ p: 1.5, borderRadius: 2, bgcolor: colors.incoming }}>
-          <Typography fontWeight={750} sx={{ overflowWrap: "anywhere" }}>{doc.fileName}</Typography>
-          <Typography sx={{ color: colors.muted, fontSize: 11 }}>{doc.uploadedByName} · {new Date(doc.createdAt).toLocaleString("pt-BR")} · {doc.status === "REVIEWED" ? "Conferido" : "Pendente"}</Typography>
-          <Typography sx={{ fontSize: 13, whiteSpace: "pre-wrap", mt: 0.5 }}>{doc.description || "Sem descrição"}</Typography>
-          <Button size="small" sx={{ color: colors.accent, mt: 0.5 }} target="_blank"
-            href={`/api/finance/campo-comprovantes/${doc.id}`}>Abrir documento</Button>
-        </Box>)}</Stack>
+        <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Dê baixa aqui ou consulte comprovantes pendentes no chat e confirme por voz ou texto.</Typography>
+        {financeOpen && <FieldReceiptsBoard compact />}
       </Drawer>
-      <Drawer anchor="right" open={warehouseOpen} onClose={() => setWarehouseOpen(false)}
+      <Drawer sx={{ zIndex: 1800 }} anchor="right" open={warehouseOpen} onClose={() => setWarehouseOpen(false)}
         PaperProps={{ sx: { width: "min(100vw, 450px)", bgcolor: colors.dialog, color: colors.text, p: 2, overflow: "auto" } }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="h6" fontWeight={850}>Movimentos do almoxarifado</Typography>
           <IconButton aria-label="Fechar almoxarifado" onClick={() => setWarehouseOpen(false)} sx={{ color: colors.text }}><CloseRoundedIcon /></IconButton>
         </Stack>
         <Typography sx={{ color: colors.muted, fontSize: 12, mb: 2 }}>Registros de entradas, retiradas, devoluções e equipamentos.</Typography>
-        {!data.warehouseJournal?.length && <Typography sx={{ color: colors.muted }}>Nenhum movimento recente.</Typography>}
+        <Button onClick={() => void openWarehouse()} disabled={warehouseLoading}>Atualizar movimentos</Button>
+        {warehouseLoading && <CircularProgress size={22}/>}
+        {warehouseError && <Alert severity="error">{warehouseError}</Alert>}
+        {!warehouseLoading && !warehouseError && !data.warehouseJournal?.length && <Typography sx={{ color: colors.muted }}>Nenhum movimento recente. Registre entradas, retiradas ou devoluções pelo chat.</Typography>}
         <Stack gap={1.2}>{data.warehouseJournal?.slice(-60).reverse().map((entry) => <Box key={entry.id} sx={{ bgcolor: colors.incoming, borderRadius: 2, p: 1.5 }}>
           <Typography fontWeight={750} sx={{ fontSize: 12 }}>{entry.authorName} · {new Date(entry.createdAt).toLocaleString("pt-BR")}</Typography>
           <Typography sx={{ fontSize: 13, whiteSpace: "pre-wrap", mt: 0.5 }}>{entry.content}</Typography>

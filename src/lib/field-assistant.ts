@@ -57,7 +57,7 @@ export function authorizeFieldContext(user: SessionUser, orderId: string) {
   const assignment = fieldAssignment(user);
   if (assignment.locked && assignment.orderId !== orderId) throw new FieldError(assignment.problem || "Este diário não pertence ao seu perfil.");
   if (!assignment.orders.some((order) => order.id === orderId)) throw new FieldError("Obra sem permissão para este perfil.");
-  if (orderId === "office") return db.officeJournal.filter((e) => e.userId === user.id || ["OWNER", "GERENTE"].includes(user.role));
+  if (orderId === "office") return db.officeJournal.filter((e) => (e.userId === user.id || ["OWNER", "GERENTE"].includes(user.role)) && (e.kind !== "FINANCIAL" || canManageWhatsAppFinance(user)));
   if (orderId === "warehouse") {
     if (!isWarehouseJournalUser(user)) throw new FieldError("Acesso ao almoxarifado não autorizado.");
   } else if (orderId !== "office") authorizeServiceOrderAccess(user, orderId, "history");
@@ -65,7 +65,7 @@ export function authorizeFieldContext(user: SessionUser, orderId: string) {
 }
 export function fieldHistory(user: SessionUser, orderId: string): WorkHistoryEntry[] {
   fieldActor(user);
-  if (orderId === "office") return db.officeJournal.filter((e) => e.userId === user.id || ["OWNER", "GERENTE"].includes(user.role));
+  if (orderId === "office") return db.officeJournal.filter((e) => (e.userId === user.id || ["OWNER", "GERENTE"].includes(user.role)) && (e.kind !== "FINANCIAL" || canManageWhatsAppFinance(user)));
   if (orderId === "warehouse") {
     if (!isWarehouseJournalUser(user)) throw new FieldError("Sem acesso ao diário do almoxarifado.");
     return db.warehouseJournal;

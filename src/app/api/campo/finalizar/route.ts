@@ -35,14 +35,16 @@ export const POST = withDatabase(async (request) => {
   if (!text.trim()) return Response.json({ operation: { status: "pending", message: "Áudio preservado, mas sem transcrição válida." } });
   const incomplete = entries.some((entry) => !entry.transcript.trim()) || entries.length > 30 || text.length > 12000;
   try {
-    return Response.json(await processFieldStatement({
+    const result = await processFieldStatement({
       user: auth.user, orderId: input.orderId, nonce, text: text.slice(0, 12000),
       summaryOnly: true,
       modelOverride: incomplete ? {
         ...diaryAction(), action: "CLARIFY", confidence: "LOW",
         question: "Gravação longa ou com trecho não transcrito. O conteúdo foi preservado, mas nenhum comando foi executado. Repita o pedido em um áudio curto.",
       } : undefined,
-    }));
+    });
+    if (result.entry.kind === "FINANCIAL") for (const entry of entries) entry.kind = "FINANCIAL";
+    return Response.json(result);
   } catch (error) {
     return Response.json({ message: error instanceof FieldError ? error.message : "Falha ao consolidar gravação." }, { status: 503 });
   }

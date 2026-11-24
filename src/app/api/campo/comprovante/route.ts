@@ -7,10 +7,12 @@ import { fieldAttachment, readFieldImage, verifyUploadedMedia, verifyUploadTicke
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { db, recordAuditLog } from "@/lib/store";
 
+import { extractDigitalReceipt, receiptHash } from "@/lib/field-receipts";
+
 const schema = z.object({
   ticket: z.string().min(20).max(3000),
   nonce: z.string().regex(/^[a-zA-Z0-9_-]{12,100}$/),
-  description: z.string().trim().min(3).max(2400),
+  description: z.string().trim().max(2400).default(""),
 });
 function recognizedDocument(bytes: Buffer, type: string) {
   if (type === "application/pdf") return bytes.subarray(0, 5).toString("ascii") === "%PDF-";
@@ -20,7 +22,7 @@ function recognizedDocument(bytes: Buffer, type: string) {
   return false;
 }
 
-export const maxDuration = 65;
+export const maxDuration = 120;
 export const POST = withDatabase(async (request) => {
   const auth = await requireApiUser(request); if (auth.response) return auth.response;
   const parsed = schema.safeParse(await request.json().catch(() => null));
@@ -45,11 +47,13 @@ export const POST = withDatabase(async (request) => {
     await verifyUploadedMedia(claim);
     const bytes = await readFieldImage(claim.path, 15 * 1024 * 1024);
     if (!recognizedDocument(bytes, claim.mimeType)) throw new FieldError("O arquivo não parece corresponder ao formato enviado.");
+    const fileHash = receiptHash(bytes);
+    const digital = await extractDigitalReceipt(bytes, claim.mimeType, input.description).catch(() => undefined);
     const now = new Date().toISOString();
     const receipt = {
       id: randomUUID(), serviceOrderId: ["warehouse", "office"].includes(claim.orderId) ? null : claim.orderId,
       uploadedByUserId: auth.user.id, uploadedByName: auth.user.name,
-      description: input.description.trim(), attachment: fieldAttachment(claim),
+      description: input.description.trim() || digital?.merchant || "Comprovante enviado sem descricao", attachment: fieldAttachment(claim), digital, fileHash,
       sourceMessageId: source, status: "PENDING_REVIEW" as const, createdAt: now, updatedAt: now,
     };
     db.fieldReceipts.push(receipt);
