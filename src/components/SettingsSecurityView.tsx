@@ -1,7 +1,4 @@
 "use client";
-import Link from "next/link";
-import WhatsAppIcon from "@mui/icons-material/WhatsApp";
-import { canUseWhatsApp } from "@/lib/whatsapp-schema";
 
 import { useState } from "react";
 import {
@@ -142,7 +139,6 @@ export function SettingsSecurityView({ user }: { user: SessionUser }) {
               </Box>
             </Stack>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-              {canUseWhatsApp(profileUser.role) && <Button component={Link} href="/assistente-whatsapp" color="success" variant="outlined" startIcon={<WhatsAppIcon />}>Assistente WhatsApp</Button>}
               <Button component="label" variant="outlined" startIcon={<CameraAltRoundedIcon />} disabled={avatarSaving}>
                 {avatarSaving ? "Salvando..." : "Trocar foto"}
                 <input

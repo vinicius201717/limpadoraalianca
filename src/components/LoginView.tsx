@@ -1,5 +1,8 @@
 "use client";
 
+import { IconButton, InputAdornment } from "@mui/material";
+import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,6 +28,7 @@ type LoginForm = z.infer<typeof loginSchema>;
 
 export function LoginView() {
   const router = useRouter();
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const {
     register,
@@ -130,7 +134,23 @@ export function LoginView() {
               />
               <TextField
                 label="Senha"
-                type="password"
+                type={showPassword ? "text" : "password"}
+                InputProps={{
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                        aria-pressed={showPassword}
+                        onClick={() => setShowPassword((visible) => !visible)}
+                        onMouseDown={(event) => event.preventDefault()}
+                        type="button"
+                        edge="end"
+                      >
+                        {showPassword ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }}
                 autoComplete="current-password"
                 {...register("password")}
                 error={Boolean(errors.password)}

@@ -1,5 +1,8 @@
 "use client";
 
+import { IconButton, InputAdornment } from "@mui/material";
+import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
 import { useEffect, useState, type FormEvent } from "react";
 import { Alert, Box, Button, CircularProgress, Stack, TextField, Typography } from "@mui/material";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
@@ -15,6 +18,7 @@ export function FieldLoginView({ changePassword = false }: { changePassword?: bo
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [installable, setInstallable] = useState(false);
 
@@ -96,7 +100,23 @@ export function FieldLoginView({ changePassword = false }: { changePassword?: bo
                   />
                   <TextField
                     label="Senha"
-                    type="password"
+                    type={showPassword ? "text" : "password"}
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                            aria-pressed={showPassword}
+                            onClick={() => setShowPassword((visible) => !visible)}
+                            onMouseDown={(event) => event.preventDefault()}
+                            type="button"
+                            edge="end"
+                          >
+                            {showPassword ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     autoComplete="current-password" required fullWidth inputProps={{ maxLength: 128 }}
