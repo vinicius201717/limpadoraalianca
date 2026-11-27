@@ -50,7 +50,7 @@ export function withDatabase<C>(handler: (request: NextRequest, context: C) => P
           if (user?.mustChangePassword) return NextResponse.json({ message: "Altere sua senha em Configurações antes de continuar.", code: "PASSWORD_CHANGE_REQUIRED" }, { status: 403 });
         }
         return handler(request, context);
-      });
+      }, true);
       response.headers.set("Cache-Control", "no-store");
       response.headers.set("X-Request-Id", requestId);
       return response;

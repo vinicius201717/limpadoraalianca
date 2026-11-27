@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { AccessDeniedView } from "@/components/AccessDeniedView";
 import { NewServiceOrderView } from "@/components/NewServiceOrderView";
 import { getCurrentUser } from "@/lib/auth";
+import { customerOptions } from "@/lib/customer-options";
 import { canAccessAllServiceOrders } from "@/lib/permissions";
 import { db, findEmployeeActiveServiceOrderConflict } from "@/lib/store";
 
@@ -17,5 +18,5 @@ export default async function NewServiceOrderPage() {
     return supervisorUser?.role === "SUPERVISOR_OBRA" && supervisorUser.isActive && !findEmployeeActiveServiceOrderConflict(employee.id);
   });
 
-  return <NewServiceOrderView supervisors={supervisors} />;
+  return <NewServiceOrderView supervisors={supervisors} recentCustomers={customerOptions(db.customers)} />;
 }

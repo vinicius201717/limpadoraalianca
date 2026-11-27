@@ -26,7 +26,7 @@ export async function dispatchFieldPush(credentials:{publicKey:string;privateKey
     for(const sub of db.fieldPushSubscriptions){
       const user=users.get(sub.userId);
       if(!user||(user.sessionVersion??0)!==sub.sessionVersion||!isAllowedPushEndpoint(sub.endpoint))continue;
-      const read=new Set(db.fieldNoticeReads.filter(r=>r.userId===user.id).map(r=>r.id));
+      const read=new Set([...db.fieldNoticeReads,...db.systemNoticeReads].filter(r=>r.userId===user.id).map(r=>r.id));
       const notices=fieldNotices(user,new Date(now)).filter(n=>{
         if(read.has(n.id)||Date.parse(n.createdAt)>now||Date.parse(n.createdAt)<now-(n.scheduled?2:24)*3600000)return false;
         const prior=delivery.get(noticeId(sub.id,n.id));

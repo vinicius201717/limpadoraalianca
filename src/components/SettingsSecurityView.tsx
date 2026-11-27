@@ -86,8 +86,8 @@ export function SettingsSecurityView({ user }: { user: SessionUser }) {
     setNotice("");
     setError("");
 
-    if (newPassword.length < 10) {
-      setError("A nova senha deve ter pelo menos 10 caracteres.");
+    if (newPassword.length < 4) {
+      setError("A nova senha deve ter pelo menos 4 caracteres.");
       return;
     }
     if (newPassword !== confirmPassword) {

@@ -7,6 +7,7 @@ import {
   AppBar,
   Avatar,
   Box,
+  Chip,
   Divider,
   Drawer,
   IconButton,
@@ -53,6 +54,7 @@ import { canViewServiceOrderFinancials } from "@/lib/permissions";
 import type { SessionUser } from "@/lib/types";
 import { useColorMode } from "./AppThemeProvider";
 import { useCurrentUser } from "./useCurrentUser";
+import { SystemNotifications, useSystemNotifications } from "./SystemNotifications";
 
 const drawerWidth = 286;
 const fallbackShellUser = { role: "COLABORADOR", canViewFinancials: false } as const satisfies Pick<
@@ -120,10 +122,12 @@ function Sidebar({
   onNavigate,
   user,
   hasAssignedServiceOrders,
+  newLeads,
 }: {
   onNavigate?: () => void;
   user: Pick<SessionUser, "role" | "canViewFinancials">;
   hasAssignedServiceOrders: boolean;
+  newLeads: number;
 }) {
   const pathname = usePathname();
   const visibleItems = menuItems.filter((item) => canSeeMenuItem(item.href, user, hasAssignedServiceOrders));
@@ -187,6 +191,7 @@ function Sidebar({
                 primary={item.label}
                 primaryTypographyProps={{ fontSize: 14, fontWeight: selected ? 800 : 650 }}
               />
+              {item.href === "/leads" && newLeads > 0 && <Chip size="small" color="error" label={newLeads} aria-label={newLeads + " novos leads"} sx={{height:22,fontWeight:800,ml:1}} />}
             </ListItemButton>
           );
         })}
@@ -215,6 +220,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
   const isDesktop = useMediaQuery(theme.breakpoints.up("lg"));
   const { mode, toggleColorMode } = useColorMode();
   const { user } = useCurrentUser();
+  const notifications = useSystemNotifications(user?.id, pathname);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [hasWarehouseAssignedOrders, setHasWarehouseAssignedOrders] = useState(false);
 
@@ -283,7 +289,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
             },
           }}
         >
-          <Sidebar user={shellUser} hasAssignedServiceOrders={effectiveHasWarehouseAssignedOrders} />
+          <Sidebar user={shellUser} hasAssignedServiceOrders={effectiveHasWarehouseAssignedOrders} newLeads={notifications.feed.newLeads} />
         </Drawer>
       ) : (
         <Drawer
@@ -292,7 +298,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
           ModalProps={{ keepMounted: true }}
           PaperProps={{ sx: { width: 304 } }}
         >
-          <Sidebar user={shellUser} hasAssignedServiceOrders={effectiveHasWarehouseAssignedOrders} onNavigate={() => setMobileOpen(false)} />
+          <Sidebar user={shellUser} hasAssignedServiceOrders={effectiveHasWarehouseAssignedOrders} newLeads={notifications.feed.newLeads} onNavigate={() => setMobileOpen(false)} />
         </Drawer>
       )}
 
@@ -339,6 +345,7 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
             />
 
             {user && user.role !== "COLABORADOR" && <Tooltip title="Assistente de Campo"><IconButton component={Link} href="/campo" aria-label="Abrir Assistente de Campo" sx={{ color: "success.main" }}><MicRoundedIcon /></IconButton></Tooltip>}
+            {user && <SystemNotifications key={user.id} state={notifications} />}
             <Tooltip title={mode === "light" ? "Tema escuro" : "Tema claro"}>
               <IconButton aria-label="Alternar tema" onClick={toggleColorMode}>
                 {mode === "light" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}

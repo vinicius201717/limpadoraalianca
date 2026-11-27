@@ -20,10 +20,7 @@ const checklistInputSchema = z.object({
 });
 
 const serviceOrderSchema = z.object({
-  customerId: z.string().optional(),
-  customerName: z.string().min(2),
-  customerPhone: z.string().optional().default(""),
-  customerEmail: z.string().email().optional().or(z.literal("")).default(""),
+  customerId: z.string().trim().min(1, "Selecione um cliente cadastrado"),
   quoteId: z.string().optional().default(""),
   title: z.string().min(3),
   serviceType: z.enum(serviceTypes).optional(),
@@ -67,9 +64,9 @@ async function POSTHandler(request: NextRequest) {
   const canSetFinancialValues = canViewServiceOrderFinancials(auth.user);
   const revenue = canSetFinancialValues ? data.revenue : 0;
   const expenses = canSetFinancialValues ? data.expenses : 0;
-  const existingCustomer = data.customerId ? db.customers.find((customer) => customer.id === data.customerId) : undefined;
-  if (data.customerId && !existingCustomer) return NextResponse.json({ message: "Cliente não encontrado." }, { status: 404 });
-  const customerId = existingCustomer?.id ?? `customer-${randomUUID()}`;
+  const existingCustomer = db.customers.find((customer) => customer.id === data.customerId);
+  if (!existingCustomer) return NextResponse.json({ message: "Cliente não encontrado." }, { status: 404 });
+  const customerId = existingCustomer.id;
 
   const supervisor = data.supervisorEmployeeId
     ? db.employees.find((employee) => employee.id === data.supervisorEmployeeId)
@@ -112,26 +109,11 @@ async function POSTHandler(request: NextRequest) {
     );
   }
 
-  if (!existingCustomer) {
-    db.customers.unshift({
-      id: customerId,
-      name: data.customerName,
-      phone: data.customerPhone,
-      email: data.customerEmail,
-      document: "",
-      type: "PERSON",
-      source: "Cadastro manual",
-      notes: "",
-      totalValue: revenue,
-      lastService: data.title,
-    });
-  }
-
   const assignedAt = supervisor ? new Date().toISOString() : undefined;
   const serviceOrder = {
     id: `os-${randomUUID()}`,
     customerId,
-    customerName: existingCustomer?.name ?? data.customerName,
+    customerName: existingCustomer.name,
     quoteId: data.quoteId,
     title: data.title,
     serviceType: data.serviceType,

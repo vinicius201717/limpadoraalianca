@@ -32,6 +32,10 @@ export function fieldNotices(user:SessionUser,now=new Date()):FieldNotice[] {
   for(const option of allowed){
     const order=db.serviceOrders.find(o=>o.id===option.id);
     if(!order)continue;
+    if(user.role==="SUPERVISOR_OBRA") for(const event of db.serviceOrderChecklistEvents.filter(e=>e.serviceOrderId===order.id&&e.type==="CREATED"&&e.userId!==user.id&&Date.parse(e.createdAt)>=now.getTime()-30*86400000)) {
+      const item=db.serviceOrderChecklistItems.find(i=>i.id===event.checklistItemId&&i.serviceOrderId===order.id);
+      if(item)rows.push({id:noticeId(user.id,event.id,"new-checklist-item"),orderId:order.id,title:"Novo item no checklist",body:order.title+" • "+item.title,kind:"CHECKLIST",createdAt:event.createdAt});
+    }
     // Remind only the designated supervisor, on days the work is scheduled or actively underway.
     if(user.role==="SUPERVISOR_OBRA" && ["IN_PROGRESS","SCHEDULED","PREPARING"].includes(order.status) &&
       !!scheduledDay(order.scheduledStart) && scheduledDay(order.scheduledStart)<=day && (order.status==="IN_PROGRESS" || day<=scheduledDay(order.scheduledEnd))) {
@@ -74,6 +78,6 @@ export function fieldNotices(user:SessionUser,now=new Date()):FieldNotice[] {
   return rows.filter(n=>Date.parse(n.createdAt)<=now.getTime()).sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)).slice(0,100);
 }
 export function unreadFieldNotices(user:SessionUser,now=new Date()){
-  const read=new Set(db.fieldNoticeReads.filter(r=>r.userId===user.id).map(r=>r.id));
+  const read=new Set([...db.fieldNoticeReads,...db.systemNoticeReads].filter(r=>r.userId===user.id).map(r=>r.id));
   return fieldNotices(user,now).map(n=>({...n,read:read.has(n.id)}));
 }

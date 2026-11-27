@@ -37,7 +37,7 @@ export const POST=withDatabase(async request=>{
   }else if(input.action==="read"){
     const allowed=new Set(fieldNotices(user).map(n=>n.id));
     db.fieldNoticeReads=db.fieldNoticeReads.filter(r=>Date.parse(r.at)>Date.now()-30*86400000);
-    for(const id of input.ids)if(allowed.has(id)&&!db.fieldNoticeReads.some(r=>r.id===id&&r.userId===user.id))db.fieldNoticeReads.push({id,userId:user.id,at:now});
+    for(const id of input.ids)if(allowed.has(id)){if(!db.fieldNoticeReads.some(r=>r.id===id&&r.userId===user.id))db.fieldNoticeReads.push({id,userId:user.id,at:now});if(!db.systemNoticeReads.some(r=>r.id===id&&r.userId===user.id))db.systemNoticeReads.push({id,userId:user.id,at:now});}
   }else if(input.action==="unsubscribe"){
     db.fieldPushSubscriptions=db.fieldPushSubscriptions.filter(s=>s.userId!==user.id||s.endpoint!==input.endpoint);
   }else{

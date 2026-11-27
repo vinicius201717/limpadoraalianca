@@ -21,7 +21,7 @@ import LoginRoundedIcon from "@mui/icons-material/LoginRounded";
 
 const loginSchema = z.object({
   login: z.string().min(8, "Informe o telefone com DDD"),
-  password: z.string().min(6, "Senha com pelo menos 6 caracteres"),
+  password: z.string().min(4, "Senha com pelo menos 4 caracteres"),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;

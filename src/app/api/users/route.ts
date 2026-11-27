@@ -1,6 +1,8 @@
 import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { identitySchema } from "@/lib/user-identity-schema";
+import { saveUserIdentity, IdentityError } from "@/lib/user-identity";
 import { newPasswordSchema } from "@/lib/password-policy";
 
 import { requireApiUser } from "@/lib/api-handlers";
@@ -8,6 +10,7 @@ import { canCreateManager, canCreateUserWithRole, canManageUsers } from "@/lib/p
 import { createSystemUser, db, flushDatabasePersistence, recordAuditLog, toPublicUser, toPublicUsers } from "@/lib/store";
 
 const userSchema = z.object({
+  identity: identitySchema,
   name: z.string().min(2),
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().min(8),
@@ -39,7 +42,7 @@ async function POSTHandler(request: NextRequest) {
 
   const parsed = userSchema.safeParse(await request.json());
   if (!parsed.success) {
-    return NextResponse.json({ message: "Dados invalidos.", issues: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ message: "Revise os dados, o CPF e as duas fotos obrigatorias.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
   if (!canCreateUserWithRole(auth.user.role, parsed.data.role)) {
@@ -64,6 +67,9 @@ async function POSTHandler(request: NextRequest) {
   if (!result.user) {
     return NextResponse.json({ message: "Nao foi possivel criar usuario." }, { status: 400 });
   }
+
+  try { await saveUserIdentity(result.user.id, parsed.data.identity, auth.user.id); }
+  catch (error) { if (error instanceof IdentityError) return NextResponse.json({ message: error.message }, { status: 422 }); throw error; }
 
   recordAuditLog({
     userId: auth.user.id,

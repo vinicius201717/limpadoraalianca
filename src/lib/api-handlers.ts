@@ -108,6 +108,8 @@ export function itemHandlers(resource: ResourceKey, responseKey: string) {
 }
 
 function ensureResourcePermission(user: SessionUser, resource: ResourceKey, mode: "read" | "write") {
+  if (resource === "systemNoticeReads" || resource === "fieldNoticeReads") return NextResponse.json({ message: "Acesso restrito." }, { status: 403 });
+  if (resource === "userIdentities") return NextResponse.json({ message: "Acesso restrito." }, { status: 403 });
   if (resource === "materials" || resource === "equipment") {
     return canManageStock(user.role)
       ? null

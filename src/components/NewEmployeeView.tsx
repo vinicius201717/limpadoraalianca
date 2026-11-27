@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { UserIdentityFields } from "./UserIdentityFields";
+import { emptyIdentity, validCpf } from "@/lib/user-identity-schema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -29,7 +31,7 @@ const cargoOptions = ["COLABORADOR", "SUPERVISOR_OBRA", "GERENTE", "ALMOXARIFADO
 const employeeStatusOptions = ["ACTIVE", "VACATION", "ON_LEAVE", "SUSPENDED", "INACTIVE", "FIRED"] as const;
 
 const employeeSchema = z.object({
-  temporaryPassword: z.string().min(10, "Use ao menos 10 caracteres.").max(72),
+  temporaryPassword: z.string().min(4, "Use ao menos 4 caracteres.").max(72),
   name: z.string().min(3, "Informe o nome"),
   email: z.string().email("Informe um e-mail valido").optional().or(z.literal("")),
   phone: z.string().min(8, "Informe o telefone"),
@@ -44,6 +46,7 @@ type EmployeeForm = z.output<typeof employeeSchema>;
 
 export function NewEmployeeView() {
   const { user, loading } = useCurrentUser();
+  const [identity, setIdentity] = useState(emptyIdentity);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const allowed = canCreateEmployee(user?.role ?? "COLABORADOR");
@@ -73,11 +76,14 @@ export function NewEmployeeView() {
     setMessage("");
     setError("");
 
+    if (!validCpf(identity.cpf) || !identity.front || !identity.back) { setError("Informe CPF valido e as duas fotos do documento."); return; }
+    try {
     const cargoLabel = labelFor(values.cargo);
     const response = await fetch("/api/employees", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        identity,
         name: values.name,
         email: values.email,
         phone: values.phone,
@@ -107,6 +113,8 @@ export function NewEmployeeView() {
 
     const data = await response.json();
     setMessage(data.message ?? `${data.employee.name} criado com sucesso. Oriente a troca da senha no primeiro acesso.`);
+    setIdentity(emptyIdentity());
+    } catch { setError("Falha de conexao. Tente novamente."); }
   }
 
   if (loading) {
@@ -147,7 +155,7 @@ export function NewEmployeeView() {
 
       <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 }, borderRadius: 3 }}>
         <Stack component="form" spacing={2.2} onSubmit={handleSubmit(onSubmit)}>
-          <TextField label="Senha inicial exclusiva" type="password" required {...register("temporaryPassword")} error={Boolean(errors.temporaryPassword)} helperText={errors.temporaryPassword?.message ?? "Mínimo de 10 caracteres. Troca obrigatória no primeiro acesso."} />
+          <TextField label="Senha inicial exclusiva" type="password" required {...register("temporaryPassword")} error={Boolean(errors.temporaryPassword)} helperText={errors.temporaryPassword?.message ?? "Mínimo de 4 caracteres. Troca obrigatória no primeiro acesso."} />
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" }, gap: 2 }}>
             <TextField label="Nome" {...register("name")} error={Boolean(errors.name)} helperText={errors.name?.message} />
             <TextField label="E-mail opcional" {...register("email")} error={Boolean(errors.email)} helperText={errors.email?.message} />
@@ -192,6 +200,7 @@ export function NewEmployeeView() {
               />
             )}
           </Box>
+          <UserIdentityFields value={identity} onChange={setIdentity} disabled={isSubmitting} />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} justifyContent="flex-end">
             <Button component={Link} href="/colaboradores" variant="outlined">
               Cancelar

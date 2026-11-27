@@ -36,7 +36,7 @@ export function FieldLoginView({ changePassword = false }: { changePassword?: bo
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending || !login.trim() || password.length < 6) return;
+    if (pending || !login.trim() || password.length < 4) return;
     setError(""); setPending(true);
     try {
       const response = await fetch("/api/auth/login", {
@@ -122,7 +122,7 @@ export function FieldLoginView({ changePassword = false }: { changePassword?: bo
                     autoComplete="current-password" required fullWidth inputProps={{ maxLength: 128 }}
                     sx={{ "& .MuiInputBase-root": { bgcolor: "#eef8ff" } }}
                   />
-                  <Button type="submit" variant="contained" color="success" size="large" disabled={pending || !login.trim() || password.length < 6}
+                  <Button type="submit" variant="contained" color="success" size="large" disabled={pending || !login.trim() || password.length < 4}
                     startIcon={pending ? <CircularProgress size={18} color="inherit" /> : <LockOutlinedIcon />}
                     sx={{ py: 1.45, fontWeight: 850, borderRadius: 3 }}>
                     {pending ? "Entrando..." : "Entrar no Assistente de Campo"}

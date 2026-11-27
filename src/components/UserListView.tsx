@@ -41,6 +41,7 @@ const roleOptions: UserRole[] = [
 type UserRow = SessionUser & {
   lastLoginAt?: string;
   createdAt?: string;
+  identityComplete?: boolean;
 };
 
 function displayEmail(email?: string) {
@@ -140,6 +141,7 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
               <TableCell>E-mail</TableCell>
               <TableCell>Role</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell>Documentacao</TableCell>
               <TableCell>Acesso financeiro</TableCell>
               <TableCell>Colaborador vinculado</TableCell>
               <TableCell>Ultimo acesso</TableCell>
@@ -164,6 +166,7 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
                   <TableCell>
                     <Chip color={row.isActive ? "success" : "default"} label={row.isActive ? "Ativo" : "Inativo"} />
                   </TableCell>
+                  <TableCell><Chip size="small" color={row.identityComplete ? "success" : "warning"} label={row.identityComplete ? "Completa" : "Pendente"} /></TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Chip
@@ -183,6 +186,7 @@ export function UserListView({ users, employees }: { users: UserRow[]; employees
                   <TableCell>{row.createdAt ? formatDateTime(row.createdAt) : "-"}</TableCell>
                   <TableCell align="right">
                     <Stack direction="row" spacing={1} justifyContent="flex-end">
+                      <Button component={Link} href={`/usuarios/${encodeURIComponent(row.id)}`} size="small" variant="outlined">Resumo</Button>
                       {row.role !== "COLABORADOR" && <Button component={Link} href={`/usuarios/${encodeURIComponent(row.id)}#assistente-campo-perfil`} size="small" color="success" variant="outlined" startIcon={<MicRoundedIcon />}>
                         Campo
                       </Button>}

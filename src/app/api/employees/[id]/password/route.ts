@@ -7,7 +7,7 @@ import { requireApiUser } from "@/lib/api-handlers";
 import { changeEmployeeAccessPassword, flushDatabasePersistence, toPublicUser } from "@/lib/store";
 
 const passwordSchema = z.object({
-  currentPassword: z.string().min(6).optional(),
+  currentPassword: z.string().min(4).max(128).optional(),
   newPassword: newPasswordSchema,
 });
 
@@ -17,7 +17,7 @@ async function PATCHHandler(request: NextRequest, context: { params: Promise<{ i
 
   const parsed = passwordSchema.safeParse(await request.json());
   if (!parsed.success) {
-    return NextResponse.json({ message: "Senha invalida. Use uma senha exclusiva de 10 a 72 caracteres.", issues: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ message: "Senha invalida. Use uma senha exclusiva de 4 a 72 caracteres.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
   const { id } = await context.params;

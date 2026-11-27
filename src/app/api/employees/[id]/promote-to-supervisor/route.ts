@@ -1,6 +1,8 @@
 import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { identitySchema } from "@/lib/user-identity-schema";
+import { saveUserIdentity, IdentityError } from "@/lib/user-identity";
 
 import { requireApiUser } from "@/lib/api-handlers";
 import { canManageTargetUserRole, canPromoteEmployeeToSupervisor } from "@/lib/permissions";
@@ -8,6 +10,7 @@ import { db, flushDatabasePersistence, promoteEmployeeToSupervisor, toPublicUser
 import { newPasswordSchema } from "@/lib/password-policy";
 
 const promoteSchema = z.object({
+  identity: identitySchema.optional(),
   email: z.string().email().optional(),
   temporaryPassword: newPasswordSchema.optional(),
 });
@@ -31,6 +34,7 @@ async function POSTHandler(request: NextRequest, context: { params: Promise<{ id
   if (target && !canManageTargetUserRole(auth.user.role, target.role, "SUPERVISOR_OBRA")) {
     return NextResponse.json({ message: "Voce nao pode alterar o papel deste usuario." }, { status: 403 });
   }
+  if (employee && !target && !parsed.data.identity) return NextResponse.json({ message: "CPF e frente e verso do documento sao obrigatorios para criar acesso." }, { status: 422 });
   if (employee && !target && !parsed.data.temporaryPassword) {
     return NextResponse.json({ message: "Informe uma senha inicial exclusiva para criar o acesso." }, { status: 400 });
   }
@@ -46,6 +50,10 @@ async function POSTHandler(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ message: "Nao foi possivel promover colaborador." }, { status: 400 });
   }
 
+  if (!target && parsed.data.identity) {
+    try { await saveUserIdentity(result.user.id, parsed.data.identity, auth.user.id); }
+    catch (error) { if (error instanceof IdentityError) return NextResponse.json({ message: error.message }, { status: 422 }); throw error; }
+  }
   await flushDatabasePersistence();
 
   return NextResponse.json({

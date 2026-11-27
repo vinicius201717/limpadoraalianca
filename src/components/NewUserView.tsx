@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { UserIdentityFields } from "./UserIdentityFields";
+import { emptyIdentity, validCpf } from "@/lib/user-identity-schema";
 import { Alert, Box, Button, Checkbox, FormControlLabel, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
@@ -20,6 +22,7 @@ const roles: UserRole[] = [
 ];
 
 export function NewUserView({ employees }: { employees: Employee[] }) {
+  const [identity, setIdentity] = useState(emptyIdentity);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -36,12 +39,16 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
     event.preventDefault();
     setNotice("");
     setError("");
+    if (temporaryPassword.length < 4) { setError("A senha inicial deve ter pelo menos 4 caracteres."); return; }
+    if (!validCpf(identity.cpf) || !identity.front || !identity.back) { setError("Informe CPF valido e as duas fotos do documento."); return; }
     setSaving(true);
+    try {
 
     const response = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        identity,
         name,
         email,
         phone,
@@ -72,6 +79,8 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
     setCanViewFinancials(false);
     setLinkedEmployeeId("");
     setTemporaryPassword("");
+    setIdentity(emptyIdentity());
+    } catch { setError("Falha de conexao. Tente novamente."); } finally { setSaving(false); }
   }
 
   return (
@@ -117,6 +126,8 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
               type="password"
               value={temporaryPassword}
               onChange={(event) => setTemporaryPassword(event.target.value)}
+              helperText="Mínimo de 4 caracteres. Troca obrigatória no primeiro acesso."
+              inputProps={{ minLength: 4, maxLength: 72 }}
               required
             />
             <TextField select label="Colaborador vinculado" value={linkedEmployeeId} onChange={(event) => setLinkedEmployeeId(event.target.value)}>
@@ -140,6 +151,7 @@ export function NewUserView({ employees }: { employees: Employee[] }) {
             />
           </Box>
 
+          <UserIdentityFields value={identity} onChange={setIdentity} disabled={saving} />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} justifyContent="flex-end">
             <Button component={Link} href="/usuarios" variant="outlined">
               Cancelar

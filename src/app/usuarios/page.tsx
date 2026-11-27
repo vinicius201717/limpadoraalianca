@@ -10,5 +10,5 @@ export default async function UsersPage() {
     return <AccessDeniedView message="Apenas o dono pode acessar usuarios e permissoes." />;
   }
 
-  return <UserListView employees={db.employees} users={toPublicUsers(db.users)} />;
+  return <UserListView employees={db.employees} users={toPublicUsers(db.users).map(u => ({ ...u, identityComplete: db.userIdentities.some(r => r.userId === u.id) }))} />;
 }

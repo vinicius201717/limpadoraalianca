@@ -26,6 +26,8 @@ import { labelFor } from "@/lib/labels";
 import { canAccessAllServiceOrders, canViewServiceOrderFinancials } from "@/lib/permissions";
 import type { Employee, ServiceType } from "@/lib/types";
 import { useCurrentUser } from "./useCurrentUser";
+import { ServiceOrderCustomerSelect } from "./ServiceOrderCustomerSelect";
+import type { CustomerOption } from "@/lib/customer-options";
 
 const serviceTypeOptions = [
   "POST_CONSTRUCTION_CLEANING",
@@ -40,9 +42,7 @@ const serviceTypeOptions = [
 ] as const satisfies readonly ServiceType[];
 
 const schema = z.object({
-  customerName: z.string().min(2, "Informe o cliente"),
-  customerPhone: z.string().optional(),
-  customerEmail: z.string().email("Informe um e-mail valido").optional().or(z.literal("")),
+  customerId: z.string().min(1, "Selecione um cliente cadastrado"),
   title: z.string().min(3, "Informe o nome do servico"),
   serviceType: z.enum(serviceTypeOptions),
   address: z.string().min(5, "Informe o endereco"),
@@ -73,10 +73,11 @@ function toIsoDateTime(value: string) {
   return new Date(value).toISOString();
 }
 
-export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }) {
+export function NewServiceOrderView({ supervisors, recentCustomers }: { supervisors: Employee[]; recentCustomers: CustomerOption[] }) {
   const router = useRouter();
   const { user, loading } = useCurrentUser();
   const [error, setError] = useState("");
+  const [selectedCustomer,setSelectedCustomer] = useState<CustomerOption|null>(null);
   const [checklistDrafts, setChecklistDrafts] = useState<ChecklistDraft[]>([
     { id: "checklist-1", title: "", description: "", isPriority: false, requiresPhoto: false },
   ]);
@@ -90,9 +91,7 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
   } = useForm<ServiceOrderFormInput, unknown, ServiceOrderForm>({
     resolver: zodResolver(schema),
     defaultValues: {
-      customerName: "",
-      customerPhone: "",
-      customerEmail: "",
+      customerId: "",
       title: "",
       serviceType: "POST_CONSTRUCTION_CLEANING",
       address: "",
@@ -114,9 +113,7 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        customerName: values.customerName,
-        customerPhone: values.customerPhone,
-        customerEmail: values.customerEmail,
+        customerId: values.customerId,
         title: values.title,
         serviceType: values.serviceType,
         description: values.description,
@@ -213,9 +210,10 @@ export function NewServiceOrderView({ supervisors }: { supervisors: Employee[] }
               Cliente
             </Typography>
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "2fr 1fr 1fr" }, gap: 2 }}>
-              <TextField label="Nome do cliente" {...register("customerName")} error={Boolean(errors.customerName)} helperText={errors.customerName?.message} />
-              <TextField label="Telefone" {...register("customerPhone")} />
-              <TextField label="E-mail" {...register("customerEmail")} error={Boolean(errors.customerEmail)} helperText={errors.customerEmail?.message} />
+              <Controller control={control} name="customerId" render={({field})=><ServiceOrderCustomerSelect recent={recentCustomers} value={selectedCustomer} onChange={option=>{setSelectedCustomer(option);field.onChange(option?.id||"");}} onBlur={field.onBlur} error={errors.customerId?.message} disabled={isSubmitting}/>}/>
+              <TextField label="Telefone" value={selectedCustomer?.phone||""} InputProps={{readOnly:true}} InputLabelProps={{shrink:true}} />
+              <TextField label="E-mail" value={selectedCustomer?.email||""} InputProps={{readOnly:true}} InputLabelProps={{shrink:true}} />
+              <Typography variant="caption" color="text.secondary" sx={{gridColumn:"1 / -1"}}>Dados de contato do cadastro selecionado. <Link href="/clientes/novo">Cadastrar novo cliente</Link>.</Typography>
             </Box>
           </Box>
 

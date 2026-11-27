@@ -8,7 +8,7 @@ import { AUTH_COOKIE, SESSION_MAX_AGE_SECONDS, signSession } from "@/lib/auth";
 import { changeOwnPassword, flushDatabasePersistence, toPublicUser } from "@/lib/store";
 
 const passwordSchema = z.object({
-  currentPassword: z.string().min(6),
+  currentPassword: z.string().min(4).max(128),
   newPassword: newPasswordSchema,
 });
 
@@ -18,7 +18,7 @@ async function PATCHHandler(request: NextRequest) {
 
   const parsed = passwordSchema.safeParse(await request.json());
   if (!parsed.success) {
-    return NextResponse.json({ message: "Senha invalida. Use entre 10 e 72 caracteres.", issues: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ message: "Senha invalida. Use entre 4 e 72 caracteres.", issues: parsed.error.flatten() }, { status: 400 });
   }
 
   const result = await changeOwnPassword(auth.user.id, parsed.data);

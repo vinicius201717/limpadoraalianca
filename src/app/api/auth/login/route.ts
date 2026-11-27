@@ -8,7 +8,7 @@ import { verifyUserCredentials } from "@/lib/store";
 const schema = z.object({
   login: z.string().trim().min(3).optional(),
   email: z.string().trim().optional(),
-  password: z.string().min(6).max(128),
+  password: z.string().min(4).max(128),
 }).refine((value) => Boolean(value.login || value.email), {
   message: "Informe telefone ou e-mail.",
 });

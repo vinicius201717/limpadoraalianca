@@ -276,8 +276,8 @@ export function EmployeeDetailView({
       setPasswordError("Perfil sem permissao para alterar esta senha.");
       return;
     }
-    if (newPassword.length < 10) {
-      setPasswordError("A nova senha deve ter pelo menos 10 caracteres.");
+    if (newPassword.length < 4) {
+      setPasswordError("A nova senha deve ter pelo menos 4 caracteres.");
       return;
     }
     if (newPassword !== confirmPassword) {

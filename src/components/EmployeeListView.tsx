@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { UserIdentityFields } from "./UserIdentityFields";
+import { emptyIdentity, validCpf } from "@/lib/user-identity-schema";
 import {
   Avatar,
   Alert,
+  Dialog, DialogTitle, DialogContent, DialogActions,
   Box,
   Button,
   Chip,
@@ -53,6 +56,11 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
   const [managerRoleIds, setManagerRoleIds] = useState<string[]>([]);
   const [collaboratorRoleIds, setCollaboratorRoleIds] = useState<string[]>([]);
   const [accessIds, setAccessIds] = useState<string[]>([]);
+  const [accessTarget, setAccessTarget] = useState<{ id: string; phone: string; promote: boolean } | null>(null);
+  const [identity, setIdentity] = useState(emptyIdentity);
+  const [password, setPassword] = useState("");
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [accessError, setAccessError] = useState("");
   const [statusBusyId, setStatusBusyId] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -87,6 +95,8 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
   async function promoteToSupervisor(employeeId: string) {
     setNotice("");
     setError("");
+    const employee = localEmployees.find(e => e.id === employeeId);
+    if (employee && !employee.userId && !accessIds.includes(employeeId)) { openAccess(employeeId, employee.phone, true); return; }
     const response = await fetch(`/api/employees/${employeeId}/promote-to-supervisor`, { method: "POST" });
     const data = await response.json().catch(() => null);
     if (response.status === 403) {
@@ -140,29 +150,28 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
     setNotice(data?.message ?? "Supervisor promovido a gerente.");
   }
 
-  async function grantAccess(employeeId: string, phone: string) {
-    setNotice("");
-    setError("");
-    if (!phone) {
-      setError("Informe telefone do colaborador antes de criar acesso.");
-      return;
-    }
-    const response = await fetch(`/api/employees/${employeeId}/grant-access`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone, role: "COLABORADOR", temporaryPassword: "alianca2026" }),
-    });
-    const data = await response.json().catch(() => null);
-    if (response.status === 403) {
-      setError("Voce nao possui permissao para executar esta acao.");
-      return;
-    }
-    if (!response.ok) {
-      setError(data?.message ?? "Nao foi possivel criar acesso.");
-      return;
-    }
-    setAccessIds((current) => [...current, employeeId]);
-    setNotice(data?.message ?? "Acesso criado com sucesso.");
+  function openAccess(id: string, phone: string, promote = false) {
+    setAccessTarget({ id, phone, promote }); setIdentity(emptyIdentity()); setPassword(""); setAccessError("");
+  }
+  function grantAccess(id: string, phone: string) { openAccess(id, phone); }
+  async function submitAccess() {
+    if (!accessTarget) return;
+    if (!accessTarget.phone || password.length < 4 || !validCpf(identity.cpf) || !identity.front || !identity.back) { setAccessError("Informe telefone, senha exclusiva de pelo menos 4 caracteres, CPF e as duas fotos."); return; }
+    setAccessBusy(true); setAccessError("");
+    try {
+      const response = await fetch(`/api/employees/${accessTarget.id}/${accessTarget.promote ? "promote-to-supervisor" : "grant-access"}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: accessTarget.phone, role: "COLABORADOR", temporaryPassword: password, identity }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw Error(data?.message ?? "Nao foi possivel criar acesso.");
+      setAccessIds(current => [...current, accessTarget.id]);
+      if (accessTarget.promote) setPromotedIds(current => [...current, accessTarget.id]);
+      if (data.employee) setLocalEmployees(current => current.map(e => e.id === accessTarget.id ? data.employee : e));
+      setNotice(data?.message ?? "Acesso criado com sucesso.");
+      setAccessTarget(null); setIdentity(emptyIdentity()); setPassword("");
+    } catch (error) { setAccessError(error instanceof Error ? error.message : "Falha de conexao."); }
+    finally { setAccessBusy(false); }
   }
 
   async function updateEmployeeStatus(employeeId: string, nextStatus: EmployeeStatus) {
@@ -193,6 +202,7 @@ export function EmployeeListView({ employees, users }: { employees: Employee[]; 
 
   return (
     <Stack spacing={3}>
+      <Dialog open={Boolean(accessTarget)} onClose={() => { if (!accessBusy) { setAccessTarget(null); setIdentity(emptyIdentity()); setPassword(""); } }} fullWidth maxWidth="sm"><DialogTitle>{accessTarget?.promote ? "Criar acesso de supervisor" : "Criar acesso"}</DialogTitle><DialogContent dividers><Stack spacing={2}>{accessError && <Alert severity="error">{accessError}</Alert>}<TextField label="Telefone" value={accessTarget?.phone ?? ""} onChange={e => setAccessTarget(current => current ? { ...current, phone: e.target.value } : null)} disabled={accessBusy || Boolean(accessTarget?.promote)} /><TextField label="Senha inicial exclusiva" type="password" value={password} onChange={e => setPassword(e.target.value)} disabled={accessBusy} /><UserIdentityFields value={identity} onChange={setIdentity} disabled={accessBusy} /></Stack></DialogContent><DialogActions><Button disabled={accessBusy} onClick={() => { setAccessTarget(null); setIdentity(emptyIdentity()); setPassword(""); }}>Cancelar</Button><Button disabled={accessBusy} variant="contained" onClick={() => void submitAccess()}>Criar acesso</Button></DialogActions></Dialog>
       <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ md: "flex-end" }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="h4" sx={{ fontSize: { xs: 28, md: 34 }, mb: 0.8 }}>

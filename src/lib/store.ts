@@ -96,6 +96,8 @@ const initialDb = {
   managementAnalyses: [] as import("./management-report-query").SavedManagementAnalysis[],
   managementAnalysisRuns: [] as import("./management-report-query").ManagementAnalysisRun[],
   users: [] as SystemUser[],
+  userIdentities: [] as import("./user-identity").UserIdentityRecord[],
+  systemNoticeReads: [] as import("./system-notifications").SystemNoticeRead[],
   servicePayments: [] as ServicePayment[],
   warranties: [] as import("./types").Warranty[],
   customers: [] as typeof customers,

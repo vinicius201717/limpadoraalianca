@@ -1,6 +1,8 @@
 import { withDatabase } from "@/lib/with-database";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { identitySchema } from "@/lib/user-identity-schema";
+import { saveUserIdentity, IdentityError } from "@/lib/user-identity";
 
 import { getCurrentUserFromRequest } from "@/lib/auth";
 import { canAccessAllServiceOrders, canCreateEmployee, canCreateUserWithRole } from "@/lib/permissions";
@@ -19,6 +21,7 @@ const roleLabels: Record<(typeof employeeAccessRoles)[number], string> = {
 };
 
 const employeeSchema = z.object({
+  identity: identitySchema.optional(),
   name: z.string().min(3),
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
@@ -71,11 +74,13 @@ async function POSTHandler(request: NextRequest) {
   }
 
   if (createAccess && !parsed.data.temporaryPassword) {
-    return NextResponse.json({ message: "Informe uma senha inicial exclusiva de pelo menos 10 caracteres." }, { status: 400 });
+    return NextResponse.json({ message: "Informe uma senha inicial exclusiva de pelo menos 4 caracteres." }, { status: 400 });
   }
   if (parsed.data.canViewFinancials && user.role !== "OWNER") {
     return NextResponse.json({ message: "Somente o dono pode conceder acesso financeiro." }, { status: 403 });
   }
+
+  if (createAccess && !parsed.data.identity) return NextResponse.json({ message: "CPF e frente e verso do documento sao obrigatorios para criar acesso." }, { status: 422 });
 
   const cargoLabel = roleLabels[(parsed.data.cargo ?? parsed.data.accessRole ?? "COLABORADOR") as keyof typeof roleLabels] ?? "Colaborador";
   const result = createEmployee(
@@ -100,6 +105,10 @@ async function POSTHandler(request: NextRequest) {
   }
   if (!result.employee) return NextResponse.json({ message: "Nao foi possivel criar colaborador." }, { status: 400 });
 
+  if (result.user && parsed.data.identity) {
+    try { await saveUserIdentity(result.user.id, parsed.data.identity, user.id); }
+    catch (error) { if (error instanceof IdentityError) return NextResponse.json({ message: error.message }, { status: 422 }); throw error; }
+  }
   await flushDatabasePersistence();
 
   return NextResponse.json(
